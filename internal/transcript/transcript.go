@@ -17,11 +17,13 @@ type Segment struct {
 	Text  string  `json:"text"`
 }
 
-// ParseChunk reads one Sarvam batch output file. Timestamps are chunk-level:
-// parallel arrays of text, start and end, in seconds from the start of that audio file.
+// ParseChunk reads one Sarvam batch output file. Timestamps are chunk-level: parallel arrays of
+// text, start and end, in seconds from the start of that audio file. The live API names the text
+// array "words" (each entry is a phrase of ~15s); the docs call it "chunks", so both are read.
 func ParseChunk(raw []byte) ([]Segment, error) {
 	var r struct {
 		Timestamps *struct {
+			Words  []string  `json:"words"`
 			Chunks []string  `json:"chunks"`
 			Start  []float64 `json:"start_time_seconds"`
 			End    []float64 `json:"end_time_seconds"`
@@ -34,12 +36,16 @@ func ParseChunk(raw []byte) ([]Segment, error) {
 	if ts == nil {
 		return nil, errors.New("response has no timestamps (was the job created with with_timestamps?)")
 	}
-	if len(ts.Chunks) != len(ts.Start) || len(ts.Chunks) != len(ts.End) {
-		return nil, fmt.Errorf("timestamps are misaligned: %d texts, %d starts, %d ends", len(ts.Chunks), len(ts.Start), len(ts.End))
+	texts := ts.Words
+	if len(texts) == 0 {
+		texts = ts.Chunks
 	}
-	segs := make([]Segment, len(ts.Chunks))
+	if len(texts) != len(ts.Start) || len(texts) != len(ts.End) {
+		return nil, fmt.Errorf("timestamps are misaligned: %d texts, %d starts, %d ends", len(texts), len(ts.Start), len(ts.End))
+	}
+	segs := make([]Segment, len(texts))
 	for i := range segs {
-		segs[i] = Segment{Start: ts.Start[i], End: ts.End[i], Text: ts.Chunks[i]}
+		segs[i] = Segment{Start: ts.Start[i], End: ts.End[i], Text: texts[i]}
 	}
 	return segs, nil
 }

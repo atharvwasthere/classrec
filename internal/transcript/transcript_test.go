@@ -61,10 +61,15 @@ func TestMarksWindowIsMinus120ToPlus180AndClampsAtStart(t *testing.T) {
 }
 
 func TestParseChunkRejectsShapesItCannotTrust(t *testing.T) {
-	ok := `{"timestamps":{"chunks":["x","y"],"start_time_seconds":[0,2],"end_time_seconds":[2,4]}}`
-	segs, err := ParseChunk([]byte(ok))
-	if err != nil || len(segs) != 2 || segs[1] != (Segment{2, 4, "y"}) {
-		t.Fatalf("valid response: %v %v", segs, err)
+	// "words" is what the live API returns; "chunks" is what the docs show
+	for key, raw := range map[string]string{
+		"words":  `{"timestamps":{"words":["x","y"],"start_time_seconds":[0,2],"end_time_seconds":[2,4]}}`,
+		"chunks": `{"timestamps":{"chunks":["x","y"],"start_time_seconds":[0,2],"end_time_seconds":[2,4]}}`,
+	} {
+		segs, err := ParseChunk([]byte(raw))
+		if err != nil || len(segs) != 2 || segs[1] != (Segment{2, 4, "y"}) {
+			t.Fatalf("%s: %v %v", key, segs, err)
+		}
 	}
 	for name, raw := range map[string]string{
 		"no timestamps": `{"transcript":"x"}`,
