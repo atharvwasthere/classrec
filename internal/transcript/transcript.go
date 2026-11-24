@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
+	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -17,10 +18,10 @@ type Segment struct {
 	Text  string  `json:"text"`
 }
 
-// ParseChunk reads one Sarvam batch output file. Timestamps are chunk-level: parallel arrays of
+// parseChunk reads one Sarvam batch output file. Timestamps are chunk-level: parallel arrays of
 // text, start and end, in seconds from the start of that audio file. The live API names the text
 // array "words" (each entry is a phrase of ~15s); the docs call it "chunks", so both are read.
-func ParseChunk(raw []byte) ([]Segment, error) {
+func parseChunk(raw []byte) ([]Segment, error) {
 	var r struct {
 		Timestamps *struct {
 			Words  []string  `json:"words"`
@@ -50,8 +51,8 @@ func ParseChunk(raw []byte) ([]Segment, error) {
 	return segs, nil
 }
 
-// Merge shifts each chunk's segments by that chunk's start offset in the full recording.
-func Merge(parts [][]Segment, offsets []float64) []Segment {
+// merge shifts each chunk's segments by that chunk's start offset in the full recording.
+func merge(parts [][]Segment, offsets []float64) []Segment {
 	var all []Segment
 	for i, part := range parts {
 		for _, s := range part {
@@ -62,8 +63,21 @@ func Merge(parts [][]Segment, offsets []float64) []Segment {
 	return all
 }
 
-// FormatTimestamp renders seconds as hh:mm:ss, rounding down.
-func FormatTimestamp(sec float64) string {
+// MergeChunks parses each chunk's Sarvam output and places its segments on the whole
+// recording's timeline: offsets[i] is where chunk i starts.
+func MergeChunks(raws [][]byte, offsets []float64) ([]Segment, error) {
+	parts := make([][]Segment, len(raws))
+	for i, raw := range raws {
+		var err error
+		if parts[i], err = parseChunk(raw); err != nil {
+			return nil, fmt.Errorf("chunk %d: %w", i, err)
+		}
+	}
+	return merge(parts, offsets), nil
+}
+
+// formatTimestamp renders seconds as hh:mm:ss, rounding down.
+func formatTimestamp(sec float64) string {
 	if sec < 0 {
 		sec = 0
 	}
@@ -71,23 +85,20 @@ func FormatTimestamp(sec float64) string {
 	return fmt.Sprintf("%02d:%02d:%02d", s/3600, s%3600/60, s%60)
 }
 
-func Line(s Segment) string {
+func line(s Segment) string {
 	// a newline would split one segment over two lines; that is the only edit made to the text
-	return "[" + FormatTimestamp(s.Start) + "] " + strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ").Replace(s.Text)
+	return "[" + formatTimestamp(s.Start) + "] " + strings.NewReplacer("\r\n", " ", "\n", " ", "\r", " ").Replace(s.Text)
 }
 
-type Meta struct {
-	Date        string
-	Source      string
-	DurationSec float64
-}
-
-func Markdown(m Meta, segs []Segment) string {
-	src, _ := json.Marshal(m.Source) // a JSON string is a valid YAML scalar
+// Markdown renders the transcript: YAML front matter (date, source file, duration), then one
+// "[hh:mm:ss] text" line per segment. The date comes from a Zoom file name, else from mtime.
+func Markdown(sourcePath string, mtime time.Time, durationSec float64, segs []Segment) string {
+	name := filepath.Base(sourcePath)
+	src, _ := json.Marshal(name) // a JSON string is a valid YAML scalar
 	var b strings.Builder
-	fmt.Fprintf(&b, "---\ndate: %s\nsource: %s\nduration: %s\n---\n\n", m.Date, src, FormatTimestamp(m.DurationSec))
+	fmt.Fprintf(&b, "---\ndate: %s\nsource: %s\nduration: %s\n---\n\n", recordingDate(name, mtime), src, formatTimestamp(durationSec))
 	for _, s := range segs {
-		b.WriteString(Line(s))
+		b.WriteString(line(s))
 		b.WriteByte('\n')
 	}
 	return b.String()
@@ -95,16 +106,16 @@ func Markdown(m Meta, segs []Segment) string {
 
 var zoomName = regexp.MustCompile(`GMT(\d{4})(\d{2})(\d{2})-\d{6}`)
 
-// RecordingDate reads the date from a Zoom file name (GMT20251228-133527_...), else uses fallback.
-func RecordingDate(fileName string, fallback time.Time) string {
+// recordingDate reads the date from a Zoom file name (GMT20251228-133527_...), else uses fallback.
+func recordingDate(fileName string, fallback time.Time) string {
 	if m := zoomName.FindStringSubmatch(fileName); m != nil {
 		return m[1] + "-" + m[2] + "-" + m[3]
 	}
 	return fallback.Format("2006-01-02")
 }
 
-// Around returns segments starting from mark-before to mark+after seconds, inclusive.
-func Around(segs []Segment, mark, before, after float64) []Segment {
+// around returns segments starting from mark-before to mark+after seconds, inclusive.
+func around(segs []Segment, mark, before, after float64) []Segment {
 	var out []Segment
 	for _, s := range segs {
 		if s.Start >= mark-before && s.Start <= mark+after {
@@ -117,13 +128,13 @@ func Around(segs []Segment, mark, before, after float64) []Segment {
 func MarksMarkdown(marks []float64, segs []Segment, before, after float64) string {
 	var b strings.Builder
 	for i, mark := range marks {
-		fmt.Fprintf(&b, "## Mark %d at [%s]\n\n", i+1, FormatTimestamp(mark))
-		window := Around(segs, mark, before, after)
+		fmt.Fprintf(&b, "## Mark %d at [%s]\n\n", i+1, formatTimestamp(mark))
+		window := around(segs, mark, before, after)
 		if len(window) == 0 {
 			b.WriteString("(no transcript lines in this window)\n")
 		}
 		for _, s := range window {
-			b.WriteString(Line(s))
+			b.WriteString(line(s))
 			b.WriteByte('\n')
 		}
 		b.WriteByte('\n')

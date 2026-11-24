@@ -3,7 +3,6 @@ package pipeline
 import (
 	"context"
 	"encoding/json"
-	"fmt"
 	"os"
 
 	"classrec/internal/transcript"
@@ -14,19 +13,20 @@ func (p *Pipeline) segmentsFile() string { return p.path("segments.json") }
 func (p *Pipeline) mergeVerify() bool { return validJSONFile(p.segmentsFile()) }
 
 func (p *Pipeline) merge(context.Context) error {
-	parts := make([][]transcript.Segment, len(p.m.Chunks))
+	raws := make([][]byte, len(p.m.Chunks))
 	offsets := make([]float64, len(p.m.Chunks))
 	for i, c := range p.m.Chunks {
-		raw, err := os.ReadFile(p.rawPath(c))
-		if err != nil {
+		var err error
+		if raws[i], err = os.ReadFile(p.rawPath(c)); err != nil {
 			return err
-		}
-		if parts[i], err = transcript.ParseChunk(raw); err != nil {
-			return fmt.Errorf("chunk %d: %w", c.Index, err)
 		}
 		offsets[i] = c.StartSec
 	}
-	b, err := json.MarshalIndent(transcript.Merge(parts, offsets), "", "  ")
+	segs, err := transcript.MergeChunks(raws, offsets)
+	if err != nil {
+		return err
+	}
+	b, err := json.MarshalIndent(segs, "", "  ")
 	if err != nil {
 		return err
 	}
