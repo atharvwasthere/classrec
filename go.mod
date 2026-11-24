@@ -1,0 +1,3 @@
+module classrec
+
+go 1.27.3
