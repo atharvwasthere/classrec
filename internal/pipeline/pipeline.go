@@ -83,6 +83,7 @@ func (p *Pipeline) Stages() []Stage {
 		{Name: "chunk", Verify: p.chunkVerify, Run: p.chunkStage},
 		{Name: "transcribe", Verify: p.transcribeVerify, Run: p.transcribe},
 		{Name: "merge", Verify: p.mergeVerify, Run: p.merge},
+		{Name: "write", Verify: p.writeVerify, Run: p.write},
 	}
 }
 
