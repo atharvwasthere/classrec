@@ -3,10 +3,12 @@ package media
 import (
 	"context"
 	"math"
+	"os"
 	"os/exec"
 	"path/filepath"
 	"reflect"
 	"testing"
+	"time"
 )
 
 func TestParseSilences(t *testing.T) {
@@ -53,5 +55,50 @@ func TestCutIsValidWhereStreamCopyIsNot(t *testing.T) {
 	dur, err := ProbeClean(ctx, good)
 	if err != nil || math.Abs(dur-10) > 0.05 {
 		t.Fatalf("re-encoded cut should be valid and 10s long, got %v, %v", dur, err)
+	}
+}
+
+func TestParseCreationDateRejectsPlaceholders(t *testing.T) {
+	old := time.Local
+	time.Local = time.FixedZone("IST", 5*3600+1800)
+	defer func() { time.Local = old }()
+	now := time.Date(2026, 11, 24, 12, 0, 0, 0, time.UTC)
+
+	if d, ok := parseCreationDate("2026-02-08T13:50:10.000000Z", now); !ok || d != "2026-02-08" {
+		t.Fatalf("real creation_time: %q %v", d, ok)
+	}
+	if d, ok := parseCreationDate("2026-02-08T20:30:00Z", now); !ok || d != "2026-02-09" {
+		t.Fatalf("20:30 UTC is 02:00 IST the next day, got %q %v", d, ok)
+	}
+	for _, bad := range []string{"", "not a date", "1904-01-01T00:00:00.000000Z", "1970-01-01T00:00:00Z", "2027-01-01T00:00:00Z"} {
+		if d, ok := parseCreationDate(bad, now); ok {
+			t.Errorf("%q must be rejected, got %q", bad, d)
+		}
+	}
+}
+
+// ffmpeg/ffprobe next to the binary win over PATH; on Windows they carry .exe.
+func TestResolveInPrefersTheBinaryNextToTheExecutable(t *testing.T) {
+	dir := t.TempDir()
+	if got := resolveIn(dir, "ffmpeg", "windows"); got != "ffmpeg" {
+		t.Fatalf("nothing next to the exe, expected the PATH name, got %q", got)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "ffmpeg.exe"), []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := resolveIn(dir, "ffmpeg", "windows"); got != filepath.Join(dir, "ffmpeg.exe") {
+		t.Fatalf("got %q", got)
+	}
+	if got := resolveIn(dir, "ffprobe", "windows"); got != "ffprobe" {
+		t.Fatalf("ffprobe.exe is absent, expected the PATH name, got %q", got)
+	}
+	if err := os.WriteFile(filepath.Join(dir, "ffprobe"), []byte("x"), 0o755); err != nil {
+		t.Fatal(err)
+	}
+	if got := resolveIn(dir, "ffprobe", "linux"); got != filepath.Join(dir, "ffprobe") {
+		t.Fatalf("no .exe suffix off Windows, got %q", got)
+	}
+	if got := resolveIn("", "ffmpeg", "windows"); got != "ffmpeg" {
+		t.Fatalf("unknown exe dir must fall back to PATH, got %q", got)
 	}
 }

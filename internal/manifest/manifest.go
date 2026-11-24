@@ -55,6 +55,7 @@ type Manifest struct {
 	Source      Source             `json:"source"`
 	AudioSHA256 string             `json:"audio_sha256,omitempty"`
 	DurationSec float64            `json:"duration_sec,omitempty"`
+	Date        string             `json:"date,omitempty"`
 	Chunks      []Chunk            `json:"chunks,omitempty"`
 	Job         *sarvam.BatchState `json:"job,omitempty"`
 	Stages      map[string]*Stage  `json:"stages"`
@@ -126,7 +127,7 @@ func (m *Manifest) Finish(name string, runErr error) error {
 func (m *Manifest) Adopt(src Source) (reset bool) {
 	reset = m.Source.Path != "" && m.Source != src
 	if reset {
-		m.AudioSHA256, m.DurationSec = "", 0
+		m.AudioSHA256, m.DurationSec, m.Date = "", 0, ""
 		m.Chunks, m.Job = nil, nil
 		m.Stages = map[string]*Stage{}
 	}

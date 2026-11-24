@@ -24,7 +24,8 @@ const usage = `usage: classrec process <video> [flags]
   --stop-after <stage> extract | chunk | transcribe | merge | write | cost
   --model --mode --lang  Sarvam job parameters (defaults: saaras:v4, codemix, hi-IN)
   --cache <dir>        raw response cache (default: user cache dir)
-  --env <file>         file holding SARVAM_API_KEY (default .env)
+  --date YYYY-MM-DD    recording date; only needed when the file name is not a Zoom name and the video has no creation date
+  --env <file>         file holding SARVAM_API_KEY (default: the one next to classrec)
 `
 
 func main() {
@@ -48,7 +49,8 @@ func run(args []string) error {
 	mode := fs.String("mode", "codemix", "")
 	lang := fs.String("lang", "hi-IN", "")
 	cache := fs.String("cache", "", "")
-	envFile := fs.String("env", ".env", "")
+	date := fs.String("date", "", "")
+	envFile := fs.String("env", "", "")
 
 	// flags may come before or after the video path
 	if err := fs.Parse(args[1:]); err != nil {
@@ -70,6 +72,9 @@ func run(args []string) error {
 		base := filepath.Base(video)
 		*out = filepath.Join("out", strings.TrimSuffix(base, filepath.Ext(base)))
 	}
+	if *envFile == "" {
+		*envFile = defaultEnvFile()
+	}
 	if *cache == "" {
 		dir, err := os.UserCacheDir()
 		if err != nil {
@@ -80,7 +85,7 @@ func run(args []string) error {
 
 	logf := func(format string, a ...any) { fmt.Fprintf(os.Stderr, format+"\n", a...) }
 	p, err := pipeline.New(pipeline.Config{
-		Video: video, Out: *out, MarksPath: *marks, ReuseAudio: *reuse, StopAfter: *stopAfter, CacheDir: *cache,
+		Video: video, Out: *out, Date: *date, MarksPath: *marks, ReuseAudio: *reuse, StopAfter: *stopAfter, CacheDir: *cache,
 		Params: sarvam.JobParams{Model: *model, Mode: *mode, LanguageCode: *lang, WithTimestamps: true},
 	}, &lazyBatch{envFile: *envFile}, logf)
 	if err != nil {

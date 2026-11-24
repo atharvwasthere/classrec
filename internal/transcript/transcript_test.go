@@ -31,7 +31,7 @@ func TestFormatTimestampRoundsDown(t *testing.T) {
 
 func TestMarkdownKeepsTextVerbatimOneLinePerSegment(t *testing.T) {
 	segs := []Segment{{3.2, 6, "शनि की दशा"}, {3601, 3605, "next guru\nline"}}
-	got := Markdown("/videos/GMT20251228-133527_Recording.mp4", time.Time{}, 7500, segs)
+	got := Markdown(`C:\Users\Admin\Class Recordings\GMT20251228-133527_Recording.mp4`, "2025-12-28", 7500, segs)
 	want := "---\ndate: 2025-12-28\nsource: \"GMT20251228-133527_Recording.mp4\"\nduration: 02:05:00\n---\n\n" +
 		"[00:00:03] शनि की दशा\n[01:00:01] next guru line\n"
 	if got != want {
@@ -39,13 +39,28 @@ func TestMarkdownKeepsTextVerbatimOneLinePerSegment(t *testing.T) {
 	}
 }
 
-func TestRecordingDate(t *testing.T) {
-	fallback := time.Date(2026, 1, 2, 0, 0, 0, 0, time.UTC)
-	if got := recordingDate("GMT20251228-133527_Recording_640x360.mp4", fallback); got != "2025-12-28" {
-		t.Fatal(got)
+// Zoom names are GMT; the date written is the local calendar day, so a class at 04:00 IST on the 28th
+// (22:30 GMT on the 27th) is dated the 28th. Windows paths must work on any OS running the code.
+func TestZoomDateIsTheLocalDayAndReadsWindowsPaths(t *testing.T) {
+	old := time.Local
+	time.Local = time.FixedZone("IST", 5*3600+1800)
+	defer func() { time.Local = old }()
+
+	cases := []struct {
+		path string
+		want string
+		ok   bool
+	}{
+		{`C:\Users\Admin\Class Recordings\GMT20251228-133527_Recording_640x360.mp4`, "2025-12-28", true},
+		{"/Users/x/Class Recordings/GMT20251227-223000_Recording.mp4", "2025-12-28", true},
+		{"lecture.mp4", "", false},
+		{`C:\GMT20251228-133527\lecture.mp4`, "", false}, // only the file name counts, not a folder
 	}
-	if got := recordingDate("lecture.mp4", fallback); got != "2026-01-02" {
-		t.Fatal(got)
+	for _, c := range cases {
+		got, ok := ZoomDate(c.path)
+		if got != c.want || ok != c.ok {
+			t.Errorf("ZoomDate(%q) = %q, %v; want %q, %v", c.path, got, ok, c.want, c.ok)
+		}
 	}
 }
 

@@ -11,18 +11,51 @@ import (
 	"math"
 	"os"
 	"os/exec"
+	"path/filepath"
 	"regexp"
+	"runtime"
 	"strconv"
 	"strings"
+	"sync"
+	"time"
 )
 
 type Silence struct {
 	Start, End float64
 }
 
+var exeDir = sync.OnceValue(func() string {
+	exe, err := os.Executable()
+	if err != nil {
+		return ""
+	}
+	if real, err := filepath.EvalSymlinks(exe); err == nil {
+		exe = real
+	}
+	return filepath.Dir(exe)
+})
+
+// resolveBin prefers ffmpeg/ffprobe sitting next to the classrec binary, then falls back to PATH.
+func resolveBin(name string) string { return resolveIn(exeDir(), name, runtime.GOOS) }
+
+func resolveIn(dir, name, goos string) string {
+	if dir == "" {
+		return name
+	}
+	file := name
+	if goos == "windows" {
+		file += ".exe"
+	}
+	candidate := filepath.Join(dir, file)
+	if fi, err := os.Stat(candidate); err == nil && !fi.IsDir() {
+		return candidate
+	}
+	return name
+}
+
 func run(ctx context.Context, name string, args ...string) (stdout, stderr string, err error) {
 	var out, errb bytes.Buffer
-	cmd := exec.CommandContext(ctx, name, args...)
+	cmd := exec.CommandContext(ctx, resolveBin(name), args...)
 	cmd.Stdout, cmd.Stderr = &out, &errb
 	if err := cmd.Run(); err != nil {
 		return out.String(), errb.String(), fmt.Errorf("%s: %w: %s", name, err, tail(errb.String()))
@@ -147,4 +180,23 @@ func SHA256File(path string) (string, error) {
 		return "", err
 	}
 	return hex.EncodeToString(h.Sum(nil)), nil
+}
+
+// CreationDate reads the container's creation_time tag as a local calendar date (YYYY-MM-DD).
+func CreationDate(ctx context.Context, path string) (string, bool) {
+	out, _, err := run(ctx, "ffprobe", "-v", "error", "-show_entries", "format_tags=creation_time",
+		"-of", "default=noprint_wrappers=1:nokey=1", path)
+	if err != nil {
+		return "", false
+	}
+	return parseCreationDate(strings.TrimSpace(out), time.Now())
+}
+
+// parseCreationDate rejects the placeholder dates some muxers write (epoch 1904/1970) and future dates.
+func parseCreationDate(s string, now time.Time) (string, bool) {
+	t, err := time.Parse(time.RFC3339Nano, s)
+	if err != nil || t.Year() < 2000 || t.After(now.Add(48*time.Hour)) {
+		return "", false
+	}
+	return t.In(time.Local).Format("2006-01-02"), true
 }

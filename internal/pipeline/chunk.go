@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"math"
 	"os"
+	"path"
 	"path/filepath"
 
 	"classrec/internal/chunk"
@@ -74,7 +75,7 @@ func (p *Pipeline) chunkStage(ctx context.Context) error {
 			chunks = append(chunks, c)
 			continue
 		}
-		c := manifest.Chunk{Index: i, File: filepath.Join("chunks", fmt.Sprintf("chunk_%03d.ogg", i)), StartSec: s.Start}
+		c := manifest.Chunk{Index: i, File: path.Join("chunks", fmt.Sprintf("chunk_%03d.ogg", i)), StartSec: s.Start}
 		if err := media.Cut(ctx, p.audioFile(), p.chunkPath(c), s.Start, s.Duration); err != nil {
 			return err
 		}

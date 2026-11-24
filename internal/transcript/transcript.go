@@ -5,7 +5,6 @@ import (
 	"encoding/json"
 	"errors"
 	"fmt"
-	"path/filepath"
 	"regexp"
 	"sort"
 	"strings"
@@ -91,12 +90,11 @@ func line(s Segment) string {
 }
 
 // Markdown renders the transcript: YAML front matter (date, source file, duration), then one
-// "[hh:mm:ss] text" line per segment. The date comes from a Zoom file name, else from mtime.
-func Markdown(sourcePath string, mtime time.Time, durationSec float64, segs []Segment) string {
-	name := filepath.Base(sourcePath)
-	src, _ := json.Marshal(name) // a JSON string is a valid YAML scalar
+// "[hh:mm:ss] text" line per segment. date is YYYY-MM-DD, resolved by the caller.
+func Markdown(sourcePath, date string, durationSec float64, segs []Segment) string {
+	src, _ := json.Marshal(baseName(sourcePath)) // a JSON string is a valid YAML scalar
 	var b strings.Builder
-	fmt.Fprintf(&b, "---\ndate: %s\nsource: %s\nduration: %s\n---\n\n", recordingDate(name, mtime), src, formatTimestamp(durationSec))
+	fmt.Fprintf(&b, "---\ndate: %s\nsource: %s\nduration: %s\n---\n\n", date, src, formatTimestamp(durationSec))
 	for _, s := range segs {
 		b.WriteString(line(s))
 		b.WriteByte('\n')
@@ -104,14 +102,27 @@ func Markdown(sourcePath string, mtime time.Time, durationSec float64, segs []Se
 	return b.String()
 }
 
-var zoomName = regexp.MustCompile(`GMT(\d{4})(\d{2})(\d{2})-\d{6}`)
-
-// recordingDate reads the date from a Zoom file name (GMT20251228-133527_...), else uses fallback.
-func recordingDate(fileName string, fallback time.Time) string {
-	if m := zoomName.FindStringSubmatch(fileName); m != nil {
-		return m[1] + "-" + m[2] + "-" + m[3]
+// baseName splits on both separators so a Windows path works no matter which OS runs this.
+func baseName(p string) string {
+	if i := strings.LastIndexAny(p, `/\`); i >= 0 {
+		return p[i+1:]
 	}
-	return fallback.Format("2006-01-02")
+	return p
+}
+
+var zoomName = regexp.MustCompile(`GMT(\d{8}-\d{6})`)
+
+// ZoomDate reads the recording's local calendar date from a Zoom file name (GMT20251228-133527_...).
+func ZoomDate(path string) (string, bool) {
+	m := zoomName.FindStringSubmatch(baseName(path))
+	if m == nil {
+		return "", false
+	}
+	t, err := time.ParseInLocation("20060102-150405", m[1], time.UTC)
+	if err != nil {
+		return "", false
+	}
+	return t.In(time.Local).Format("2006-01-02"), true
 }
 
 // around returns segments starting from mark-before to mark+after seconds, inclusive.

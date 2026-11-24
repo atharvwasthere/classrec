@@ -5,6 +5,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"slices"
 
 	"classrec/internal/manifest"
 	"classrec/internal/sarvam"
@@ -17,6 +18,8 @@ type Config struct {
 	ReuseAudio string
 	// MarksPath is an optional JSON array of seconds; each gets a transcript window in marks.md.
 	MarksPath string
+	// Date (YYYY-MM-DD) overrides the recording date; otherwise it comes from the file name or the container.
+	Date string
 	// StopAfter ends the run after the named stage, e.g. "chunk" for an offline dry run.
 	StopAfter string
 
@@ -50,6 +53,7 @@ type Pipeline struct {
 	m     *manifest.Manifest
 	batch Batcher
 	logf  func(string, ...any)
+	date  string // resolved recording date, set by Run
 }
 
 // New prepares a run. batch may be nil when every transcript is already cached.
@@ -101,7 +105,15 @@ func (p *Pipeline) stages() []Stage {
 }
 
 func (p *Pipeline) Run(ctx context.Context) error {
-	if err := Execute(ctx, p.m, p.stages(), p.logf); err != nil {
+	stages := p.stages()
+	if slices.ContainsFunc(stages, func(s Stage) bool { return s.Name == "write" }) {
+		// fail before anything is sent to Sarvam, not after paying for it
+		var err error
+		if p.date, err = p.resolveDate(ctx); err != nil {
+			return err
+		}
+	}
+	if err := Execute(ctx, p.m, stages, p.logf); err != nil {
 		return fmt.Errorf("%w (re-run to resume from this stage)", err)
 	}
 	return nil

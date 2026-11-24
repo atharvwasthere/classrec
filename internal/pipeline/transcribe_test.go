@@ -42,7 +42,7 @@ func newFixture(t *testing.T) *fixture {
 	video := makeVideo(t, dir, 35)
 	return &fixture{dir: dir, video: video, srv: srv, cfg: Config{
 		Video: video, Out: filepath.Join(dir, "out"), CacheDir: filepath.Join(dir, "cache"),
-		ChunkMaxSec: 20, SilenceWindowSec: 5,
+		ChunkMaxSec: 20, SilenceWindowSec: 5, Date: "2026-01-02",
 		Params: sarvam.JobParams{Model: "saaras:v4", Mode: "codemix", WithTimestamps: true},
 	}}
 }
