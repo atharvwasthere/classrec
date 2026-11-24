@@ -6,6 +6,8 @@ package sarvam
 import (
 	"bytes"
 	"context"
+	"crypto/sha256"
+	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
@@ -19,7 +21,7 @@ import (
 	"time"
 )
 
-const DefaultBaseURL = "https://api.sarvam.ai"
+const defaultBaseURL = "https://api.sarvam.ai"
 
 type JobParams struct {
 	Model          string   `json:"model"`
@@ -27,6 +29,13 @@ type JobParams struct {
 	LanguageCode   string   `json:"language_code,omitempty"`
 	WithTimestamps bool     `json:"with_timestamps"`
 	Keyterms       []string `json:"keyterms,omitempty"`
+}
+
+// Fingerprint identifies these parameters, so results and jobs made with other ones are never reused.
+func (p JobParams) Fingerprint() string {
+	b, _ := json.Marshal(p)
+	sum := sha256.Sum256(b)
+	return hex.EncodeToString(sum[:4])
 }
 
 type RetryPolicy struct {
@@ -47,7 +56,7 @@ type Client struct {
 
 func New(apiKey string) *Client {
 	return &Client{
-		BaseURL:   DefaultBaseURL,
+		BaseURL:   defaultBaseURL,
 		HTTP:      &http.Client{Timeout: 10 * time.Minute},
 		Retry:     RetryPolicy{Max: 5, Base: time.Second, MaxDelay: 30 * time.Second, Sleep: sleep},
 		PollEvery: 5 * time.Second,
@@ -66,15 +75,15 @@ func sleep(ctx context.Context, d time.Duration) error {
 	}
 }
 
-// APIError carries Sarvam's error body. It never includes request headers or URLs.
-type APIError struct {
+// apiError carries Sarvam's error body. It never includes request headers or URLs.
+type apiError struct {
 	Status    int
 	Code      string
 	Message   string
 	RequestID string
 }
 
-func (e *APIError) Error() string {
+func (e *apiError) Error() string {
 	s := fmt.Sprintf("sarvam: HTTP %d", e.Status)
 	if e.Code != "" {
 		s += " " + e.Code
@@ -88,7 +97,7 @@ func (e *APIError) Error() string {
 	return s
 }
 
-func parseAPIError(status int, body []byte) *APIError {
+func parseAPIError(status int, body []byte) *apiError {
 	var wrapper struct {
 		Error struct {
 			Message   string `json:"message"`
@@ -96,7 +105,7 @@ func parseAPIError(status int, body []byte) *APIError {
 			RequestID string `json:"request_id"`
 		} `json:"error"`
 	}
-	e := &APIError{Status: status}
+	e := &apiError{Status: status}
 	if json.Unmarshal(body, &wrapper) == nil && wrapper.Error.Message != "" {
 		e.Code, e.Message, e.RequestID = wrapper.Error.Code, wrapper.Error.Message, wrapper.Error.RequestID
 		return e
@@ -214,7 +223,7 @@ func (c *Client) apiJSON(ctx context.Context, method, path string, in, out any) 
 	return json.Unmarshal(body, out)
 }
 
-func (c *Client) InitJob(ctx context.Context, p JobParams) (string, error) {
+func (c *Client) initJob(ctx context.Context, p JobParams) (string, error) {
 	var resp struct {
 		JobID string `json:"job_id"`
 	}
@@ -249,16 +258,16 @@ func (c *Client) links(ctx context.Context, path, field, jobID string, names []s
 	return out, nil
 }
 
-func (c *Client) UploadLinks(ctx context.Context, jobID string, names []string) (map[string]string, error) {
+func (c *Client) uploadLinks(ctx context.Context, jobID string, names []string) (map[string]string, error) {
 	return c.links(ctx, "/speech-to-text/job/v1/upload-files", "upload_urls", jobID, names)
 }
 
-func (c *Client) DownloadLinks(ctx context.Context, jobID string, names []string) (map[string]string, error) {
+func (c *Client) downloadLinks(ctx context.Context, jobID string, names []string) (map[string]string, error) {
 	return c.links(ctx, "/speech-to-text/job/v1/download-files", "download_urls", jobID, names)
 }
 
-// PutFile uploads to a presigned Azure blob URL.
-func (c *Client) PutFile(ctx context.Context, signedURL, path string) error {
+// putFile uploads to a presigned Azure blob URL.
+func (c *Client) putFile(ctx context.Context, signedURL, path string) error {
 	fi, err := os.Stat(path)
 	if err != nil {
 		return err
@@ -287,7 +296,7 @@ func (c *Client) PutFile(ctx context.Context, signedURL, path string) error {
 	return nil
 }
 
-func (c *Client) GetBytes(ctx context.Context, signedURL string) ([]byte, error) {
+func (c *Client) getBytes(ctx context.Context, signedURL string) ([]byte, error) {
 	status, body, err := c.do(ctx, func() (*http.Request, error) {
 		req, err := http.NewRequest(http.MethodGet, signedURL, nil)
 		return req, scrub(err)
@@ -301,29 +310,29 @@ func (c *Client) GetBytes(ctx context.Context, signedURL string) ([]byte, error)
 	return body, nil
 }
 
-func (c *Client) Start(ctx context.Context, jobID string) error {
+func (c *Client) start(ctx context.Context, jobID string) error {
 	return c.apiJSON(ctx, http.MethodPost, "/speech-to-text/job/v1/"+url.PathEscape(jobID)+"/start", nil, nil)
 }
 
-type FileRef struct {
+type fileRef struct {
 	FileName string `json:"file_name"`
 }
 
-type FileDetail struct {
-	Inputs       []FileRef `json:"inputs"`
-	Outputs      []FileRef `json:"outputs"`
+type fileDetail struct {
+	Inputs       []fileRef `json:"inputs"`
+	Outputs      []fileRef `json:"outputs"`
 	State        string    `json:"state"`
 	ErrorMessage *string   `json:"error_message"`
 }
 
-type JobStatus struct {
+type jobStatus struct {
 	JobState     string       `json:"job_state"`
 	ErrorMessage string       `json:"error_message"`
-	JobDetails   []FileDetail `json:"job_details"`
+	JobDetails   []fileDetail `json:"job_details"`
 }
 
-func (c *Client) Status(ctx context.Context, jobID string) (*JobStatus, error) {
-	var s JobStatus
+func (c *Client) status(ctx context.Context, jobID string) (*jobStatus, error) {
+	var s jobStatus
 	if err := c.apiJSON(ctx, http.MethodGet, "/speech-to-text/job/v1/"+url.PathEscape(jobID)+"/status", nil, &s); err != nil {
 		return nil, err
 	}

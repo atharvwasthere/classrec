@@ -3,7 +3,9 @@ package sarvam
 import (
 	"context"
 	"encoding/json"
+	"errors"
 	"fmt"
+	"slices"
 	"strings"
 	"time"
 )
@@ -13,10 +15,22 @@ type BatchFile struct {
 	Path string
 }
 
-// BatchState is what the caller persists so a crash resumes the same paid job.
+// BatchState is the job progress the caller persists, so a crash resumes the same paid job.
 type BatchState struct {
-	JobID   string
-	Started bool
+	JobID   string   `json:"id"`
+	Started bool     `json:"started"`
+	Files   []string `json:"files"`
+	Params  string   `json:"params"`
+}
+
+type BatchRequest struct {
+	Params JobParams
+	Files  []BatchFile
+	// Resume is the state saved by an earlier run. It is used only if it was made for the same files and parameters.
+	Resume *BatchState
+	// Save persists progress as the job advances; it gets nil once the job is over.
+	Save func(*BatchState) error
+	Logf func(string, ...any)
 }
 
 type FileResult struct {
@@ -29,72 +43,87 @@ type FileResult struct {
 
 // RunBatch uploads every file in one job, starts it, polls to completion and downloads
 // each output. Files that succeeded are returned even when others failed (err is then non-nil).
-func (c *Client) RunBatch(ctx context.Context, p JobParams, files []BatchFile, st BatchState,
-	save func(BatchState) error, logf func(string, ...any)) (map[string]FileResult, error) {
-
-	names := make([]string, len(files))
-	for i, f := range files {
+func (c *Client) RunBatch(ctx context.Context, req BatchRequest) (map[string]FileResult, error) {
+	names := make([]string, len(req.Files))
+	for i, f := range req.Files {
 		names[i] = f.Name
+	}
+	fingerprint := req.Params.Fingerprint()
+	st := BatchState{Files: names, Params: fingerprint}
+	if r := req.Resume; r != nil && r.JobID != "" && r.Params == fingerprint && slices.Equal(r.Files, names) {
+		st = *r
+	}
+	persist := func() error {
+		snapshot := st
+		return req.Save(&snapshot)
 	}
 	uploadMS := map[string]int64{}
 
 	if st.JobID == "" {
-		id, err := c.InitJob(ctx, p)
+		id, err := c.initJob(ctx, req.Params)
 		if err != nil {
 			return nil, fmt.Errorf("init job: %w", err)
 		}
-		st = BatchState{JobID: id}
-		if err := save(st); err != nil {
+		st.JobID = id
+		if err := persist(); err != nil {
 			return nil, err
 		}
-		logf("created job %s", id)
+		req.Logf("created job %s", id)
 	} else {
-		logf("resuming job %s", st.JobID)
+		req.Logf("resuming job %s", st.JobID)
 	}
 
 	if !st.Started {
-		links, err := c.UploadLinks(ctx, st.JobID, names)
+		links, err := c.uploadLinks(ctx, st.JobID, names)
 		if err != nil {
 			return nil, fmt.Errorf("upload links: %w", err)
 		}
-		for _, f := range files {
+		for _, f := range req.Files {
 			t := time.Now()
-			logf("uploading %s", f.Name)
-			if err := c.PutFile(ctx, links[f.Name], f.Path); err != nil {
+			req.Logf("uploading %s", f.Name)
+			if err := c.putFile(ctx, links[f.Name], f.Path); err != nil {
 				return nil, fmt.Errorf("upload %s: %w", f.Name, err)
 			}
 			uploadMS[f.Name] = time.Since(t).Milliseconds()
 		}
-		if err := c.Start(ctx, st.JobID); err != nil {
-			if s, sErr := c.Status(ctx, st.JobID); sErr != nil || s.JobState == "Accepted" {
+		if err := c.start(ctx, st.JobID); err != nil {
+			if s, sErr := c.status(ctx, st.JobID); sErr != nil || s.JobState == "Accepted" {
 				return nil, fmt.Errorf("start job: %w", err)
 			}
 		}
 		st.Started = true
-		if err := save(st); err != nil {
+		if err := persist(); err != nil {
 			return nil, err
 		}
-		logf("job started")
+		req.Logf("job started")
 	}
 
 	waitStart := time.Now()
-	status, err := c.waitDone(ctx, st.JobID, logf)
+	status, err := c.waitDone(ctx, st.JobID, req.Logf)
 	if err != nil {
 		return nil, err
 	}
 	wall := time.Since(waitStart).Milliseconds()
 	if status.JobState == "Failed" {
-		_ = save(BatchState{}) // a failed job can't be resumed
+		_ = req.Save(nil) // a failed job can't be resumed
 		return nil, fmt.Errorf("job %s failed: %s", st.JobID, status.ErrorMessage)
 	}
 
-	return c.collect(ctx, st.JobID, status, names, uploadMS, wall)
+	results, err := c.collect(ctx, st.JobID, status, names, uploadMS, wall)
+	// The job is over unless a download failed; a finished job must not be resumed.
+	var partial *FilesFailedError
+	if err == nil || errors.As(err, &partial) {
+		if serr := req.Save(nil); serr != nil {
+			return results, serr
+		}
+	}
+	return results, err
 }
 
-func (c *Client) waitDone(ctx context.Context, jobID string, logf func(string, ...any)) (*JobStatus, error) {
+func (c *Client) waitDone(ctx context.Context, jobID string, logf func(string, ...any)) (*jobStatus, error) {
 	last := ""
 	for {
-		s, err := c.Status(ctx, jobID)
+		s, err := c.status(ctx, jobID)
 		if err != nil {
 			return nil, fmt.Errorf("poll job %s (it keeps running; re-run to resume): %w", jobID, err)
 		}
@@ -111,7 +140,7 @@ func (c *Client) waitDone(ctx context.Context, jobID string, logf func(string, .
 	}
 }
 
-func (c *Client) collect(ctx context.Context, jobID string, status *JobStatus, names []string,
+func (c *Client) collect(ctx context.Context, jobID string, status *jobStatus, names []string,
 	uploadMS map[string]int64, wall int64) (map[string]FileResult, error) {
 
 	outputFor := map[string]string{} // input name -> output name
@@ -143,13 +172,13 @@ func (c *Client) collect(ctx context.Context, jobID string, status *JobStatus, n
 		for _, o := range outputFor {
 			outs = append(outs, o)
 		}
-		links, err := c.DownloadLinks(ctx, jobID, outs)
+		links, err := c.downloadLinks(ctx, jobID, outs)
 		if err != nil {
 			return nil, fmt.Errorf("download links: %w", err)
 		}
 		for in, out := range outputFor {
 			t := time.Now()
-			raw, err := c.GetBytes(ctx, links[out])
+			raw, err := c.getBytes(ctx, links[out])
 			if err != nil {
 				return results, fmt.Errorf("download %s: %w", in, err)
 			}

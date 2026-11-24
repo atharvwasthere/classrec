@@ -104,8 +104,7 @@ type lazyBatch struct {
 	client  *sarvam.Client
 }
 
-func (l *lazyBatch) RunBatch(ctx context.Context, p sarvam.JobParams, files []sarvam.BatchFile, st sarvam.BatchState,
-	save func(sarvam.BatchState) error, logf func(string, ...any)) (map[string]sarvam.FileResult, error) {
+func (l *lazyBatch) RunBatch(ctx context.Context, req sarvam.BatchRequest) (map[string]sarvam.FileResult, error) {
 	if l.client == nil {
 		key, err := loadAPIKey(l.envFile)
 		if err != nil {
@@ -113,5 +112,5 @@ func (l *lazyBatch) RunBatch(ctx context.Context, p sarvam.JobParams, files []sa
 		}
 		l.client = sarvam.New(key)
 	}
-	return l.client.RunBatch(ctx, p, files, st, save, logf)
+	return l.client.RunBatch(ctx, req)
 }

@@ -7,6 +7,8 @@ import (
 	"os"
 	"path/filepath"
 	"time"
+
+	"classrec/internal/sarvam"
 )
 
 type Status string
@@ -48,22 +50,13 @@ type Chunk struct {
 	API         *APITiming `json:"api,omitempty"`
 }
 
-// Job is the in-flight Sarvam batch job, persisted so a crash while polling
-// resumes the same (already paid) job instead of creating a second one.
-type Job struct {
-	ID      string   `json:"id"`
-	Started bool     `json:"started"`
-	Files   []string `json:"files"`
-	Params  string   `json:"params"` // fingerprint of the job parameters it was created with
-}
-
 type Manifest struct {
-	Source      Source            `json:"source"`
-	AudioSHA256 string            `json:"audio_sha256,omitempty"`
-	DurationSec float64           `json:"duration_sec,omitempty"`
-	Chunks      []Chunk           `json:"chunks,omitempty"`
-	Job         *Job              `json:"job,omitempty"`
-	Stages      map[string]*Stage `json:"stages"`
+	Source      Source             `json:"source"`
+	AudioSHA256 string             `json:"audio_sha256,omitempty"`
+	DurationSec float64            `json:"duration_sec,omitempty"`
+	Chunks      []Chunk            `json:"chunks,omitempty"`
+	Job         *sarvam.BatchState `json:"job,omitempty"`
+	Stages      map[string]*Stage  `json:"stages"`
 
 	path string
 	now  func() time.Time
@@ -145,4 +138,21 @@ func (m *Manifest) Reset(src Source) {
 	m.AudioSHA256, m.DurationSec = "", 0
 	m.Chunks, m.Job = nil, nil
 	m.Stages = map[string]*Stage{}
+}
+
+// SetJob records the in-flight batch job (nil when none) and saves.
+func (m *Manifest) SetJob(j *sarvam.BatchState) error {
+	m.Job = j
+	return m.Save()
+}
+
+// RecordAPI notes what a billed Sarvam call for the named chunk file cost in wall time.
+func (m *Manifest) RecordAPI(chunkFile string, t APITiming) error {
+	for i := range m.Chunks {
+		if filepath.Base(m.Chunks[i].File) == chunkFile {
+			m.Chunks[i].API = &t
+			return nil
+		}
+	}
+	return fmt.Errorf("no chunk named %s in the manifest", chunkFile)
 }

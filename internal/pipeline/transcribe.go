@@ -2,14 +2,11 @@ package pipeline
 
 import (
 	"context"
-	"crypto/sha256"
-	"encoding/hex"
 	"encoding/json"
 	"errors"
 	"fmt"
 	"os"
 	"path/filepath"
-	"slices"
 
 	"classrec/internal/manifest"
 	"classrec/internal/sarvam"
@@ -19,18 +16,11 @@ import (
 const maxFilesPerJob = 20
 
 type Batcher interface {
-	RunBatch(ctx context.Context, p sarvam.JobParams, files []sarvam.BatchFile, st sarvam.BatchState,
-		save func(sarvam.BatchState) error, logf func(string, ...any)) (map[string]sarvam.FileResult, error)
-}
-
-func (p *Pipeline) paramsKey() string {
-	b, _ := json.Marshal(p.Cfg.Params)
-	sum := sha256.Sum256(b)
-	return hex.EncodeToString(sum[:4])
+	RunBatch(ctx context.Context, req sarvam.BatchRequest) (map[string]sarvam.FileResult, error)
 }
 
 func (p *Pipeline) cachePath(c manifest.Chunk) string {
-	return filepath.Join(p.Cfg.CacheDir, c.SHA256+"."+p.paramsKey()+".json")
+	return filepath.Join(p.Cfg.CacheDir, c.SHA256+"."+p.Cfg.Params.Fingerprint()+".json")
 }
 
 func (p *Pipeline) rawPath(c manifest.Chunk) string {
@@ -94,41 +84,22 @@ func (p *Pipeline) runBatch(ctx context.Context, need []sarvam.BatchFile) error 
 	if len(need) > maxFilesPerJob {
 		return fmt.Errorf("%d chunks exceed Sarvam's %d files per job", len(need), maxFilesPerJob)
 	}
-	names := make([]string, len(need))
-	for i, f := range need {
-		names[i] = f.Name
-	}
-	key := p.paramsKey()
+	results, err := p.Batch.RunBatch(ctx, sarvam.BatchRequest{
+		Params: p.Cfg.Params, Files: need, Resume: p.M.Job, Save: p.M.SetJob, Logf: p.Logf,
+	})
 
-	var st sarvam.BatchState
-	if j := p.M.Job; j != nil && j.Params == key && slices.Equal(j.Files, names) {
-		st = sarvam.BatchState{JobID: j.ID, Started: j.Started}
-	}
-	save := func(s sarvam.BatchState) error {
-		p.M.Job = nil
-		if s.JobID != "" {
-			p.M.Job = &manifest.Job{ID: s.JobID, Started: s.Started, Files: names, Params: key}
-		}
-		return p.M.Save()
-	}
-
-	results, err := p.Batch.RunBatch(ctx, p.Cfg.Params, need, st, save, p.Logf)
-
-	byName := map[string]*manifest.Chunk{}
-	for i := range p.M.Chunks {
-		byName[filepath.Base(p.M.Chunks[i].File)] = &p.M.Chunks[i]
+	byName := map[string]manifest.Chunk{}
+	for _, c := range p.M.Chunks {
+		byName[filepath.Base(c.File)] = c
 	}
 	for name, r := range results {
-		c := byName[name]
-		if werr := writeFileAtomic(p.cachePath(*c), r.Raw); werr != nil {
+		if werr := writeFileAtomic(p.cachePath(byName[name]), r.Raw); werr != nil {
 			return werr
 		}
-		c.API = &manifest.APITiming{JobID: r.JobID, UploadMS: r.UploadMS, JobWallMS: r.JobWallMS, DownloadMS: r.DownloadMS}
-	}
-
-	var partial *sarvam.FilesFailedError
-	if err == nil || errors.As(err, &partial) {
-		p.M.Job = nil // the job is over; anything still missing goes in a new one
+		timing := manifest.APITiming{JobID: r.JobID, UploadMS: r.UploadMS, JobWallMS: r.JobWallMS, DownloadMS: r.DownloadMS}
+		if rerr := p.M.RecordAPI(name, timing); rerr != nil {
+			return rerr
+		}
 	}
 	if serr := p.M.Save(); serr != nil {
 		return serr
