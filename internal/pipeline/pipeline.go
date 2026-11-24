@@ -15,6 +15,10 @@ type Config struct {
 	Out   string
 	// ReuseAudio is an already-extracted audio file adopted instead of re-extracting, if its duration matches the video.
 	ReuseAudio string
+	// MarksPath is an optional JSON array of seconds; each gets a transcript window in marks.md.
+	MarksPath string
+	// StopAfter ends the run after the named stage, e.g. "chunk" for an offline dry run.
+	StopAfter string
 
 	ChunkMaxSec      float64
 	SilenceWindowSec float64
@@ -78,7 +82,7 @@ func New(cfg Config, logf func(string, ...any)) (*Pipeline, error) {
 }
 
 func (p *Pipeline) Stages() []Stage {
-	return []Stage{
+	stages := []Stage{
 		{Name: "extract", Verify: p.extractVerify, Run: p.extract},
 		{Name: "chunk", Verify: p.chunkVerify, Run: p.chunkStage},
 		{Name: "transcribe", Verify: p.transcribeVerify, Run: p.transcribe},
@@ -86,6 +90,15 @@ func (p *Pipeline) Stages() []Stage {
 		{Name: "write", Verify: p.writeVerify, Run: p.write},
 		{Name: "cost", Verify: p.costVerify, Run: p.cost},
 	}
+	if p.Cfg.MarksPath != "" {
+		stages = append(stages, Stage{Name: "marks", Verify: func() bool { return false }, Run: p.marks})
+	}
+	for i, s := range stages {
+		if s.Name == p.Cfg.StopAfter {
+			return stages[:i+1]
+		}
+	}
+	return stages
 }
 
 func (p *Pipeline) Run(ctx context.Context) error {
