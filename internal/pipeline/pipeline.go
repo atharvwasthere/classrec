@@ -14,6 +14,26 @@ type Config struct {
 	Out   string
 	// ReuseAudio is an already-extracted audio file adopted instead of re-extracting, if its duration matches the video.
 	ReuseAudio string
+
+	ChunkMaxSec      float64
+	SilenceWindowSec float64
+	SilenceNoiseDB   float64
+	SilenceMinSec    float64
+}
+
+func (c *Config) applyDefaults() {
+	if c.ChunkMaxSec == 0 {
+		c.ChunkMaxSec = 3600
+	}
+	if c.SilenceWindowSec == 0 {
+		c.SilenceWindowSec = 120
+	}
+	if c.SilenceNoiseDB == 0 {
+		c.SilenceNoiseDB = -35
+	}
+	if c.SilenceMinSec == 0 {
+		c.SilenceMinSec = 0.4
+	}
 }
 
 type Pipeline struct {
@@ -23,6 +43,7 @@ type Pipeline struct {
 }
 
 func New(cfg Config, logf func(string, ...any)) (*Pipeline, error) {
+	cfg.applyDefaults()
 	if err := os.MkdirAll(cfg.Out, 0o755); err != nil {
 		return nil, err
 	}
@@ -53,6 +74,7 @@ func New(cfg Config, logf func(string, ...any)) (*Pipeline, error) {
 func (p *Pipeline) Stages() []Stage {
 	return []Stage{
 		{Name: "extract", Verify: p.extractVerify, Run: p.extract},
+		{Name: "chunk", Verify: p.chunkVerify, Run: p.chunkStage},
 	}
 }
 
