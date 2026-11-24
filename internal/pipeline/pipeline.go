@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 
 	"classrec/internal/manifest"
+	"classrec/internal/sarvam"
 )
 
 type Config struct {
@@ -19,6 +20,10 @@ type Config struct {
 	SilenceWindowSec float64
 	SilenceNoiseDB   float64
 	SilenceMinSec    float64
+
+	Params sarvam.JobParams
+	// CacheDir holds raw Sarvam responses keyed by chunk audio hash, shared across output dirs.
+	CacheDir string
 }
 
 func (c *Config) applyDefaults() {
@@ -37,9 +42,10 @@ func (c *Config) applyDefaults() {
 }
 
 type Pipeline struct {
-	Cfg  Config
-	M    *manifest.Manifest
-	Logf func(string, ...any)
+	Cfg   Config
+	M     *manifest.Manifest
+	Batch Batcher
+	Logf  func(string, ...any)
 }
 
 func New(cfg Config, logf func(string, ...any)) (*Pipeline, error) {
@@ -75,6 +81,7 @@ func (p *Pipeline) Stages() []Stage {
 	return []Stage{
 		{Name: "extract", Verify: p.extractVerify, Run: p.extract},
 		{Name: "chunk", Verify: p.chunkVerify, Run: p.chunkStage},
+		{Name: "transcribe", Verify: p.transcribeVerify, Run: p.transcribe},
 	}
 }
 

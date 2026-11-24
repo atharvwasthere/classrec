@@ -3,7 +3,6 @@ package sarvam
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"fmt"
 	"strings"
 	"time"
@@ -161,10 +160,16 @@ func (c *Client) collect(ctx context.Context, jobID string, status *JobStatus, n
 		}
 	}
 	if len(failed) > 0 {
-		return results, errors.New("files failed: " + strings.Join(failed, "; "))
+		return results, &FilesFailedError{Files: failed}
 	}
 	return results, nil
 }
+
+// FilesFailedError means the job finished but some files had no result. The job is
+// over, so the caller should retry only those files in a new one.
+type FilesFailedError struct{ Files []string }
+
+func (e *FilesFailedError) Error() string { return "files failed: " + strings.Join(e.Files, "; ") }
 
 func containsPrefix(list []string, name string) bool {
 	for _, s := range list {

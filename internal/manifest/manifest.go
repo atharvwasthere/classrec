@@ -54,6 +54,7 @@ type Job struct {
 	ID      string   `json:"id"`
 	Started bool     `json:"started"`
 	Files   []string `json:"files"`
+	Params  string   `json:"params"` // fingerprint of the job parameters it was created with
 }
 
 type Manifest struct {

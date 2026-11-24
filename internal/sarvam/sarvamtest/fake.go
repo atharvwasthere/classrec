@@ -27,6 +27,7 @@ type Server struct {
 	PollsRun int               // status polls answered "Running" before "Completed"
 	Params   []json.RawMessage // job_parameters received by init
 	Bad      []string          // protocol violations seen
+	Uploaded []string          // file names PUT, in order
 }
 
 type job struct {
@@ -208,6 +209,7 @@ func (s *Server) handleBlob(w http.ResponseWriter, r *http.Request) {
 		if j := s.jobs[parts[1]]; j != nil {
 			j.files[parts[2]] = true
 		}
+		s.Uploaded = append(s.Uploaded, parts[2])
 		s.mu.Unlock()
 		w.WriteHeader(201)
 	case "GET":
