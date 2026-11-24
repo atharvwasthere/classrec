@@ -13,15 +13,15 @@ func TestExtractVerifyAndReuse(t *testing.T) {
 	dir := t.TempDir()
 	video := makeVideo(t, dir, 4)
 
-	p, err := New(Config{Video: video, Out: filepath.Join(dir, "out")}, quiet)
+	p, err := New(Config{Video: video, Out: filepath.Join(dir, "out")}, nil, quiet)
 	if err != nil {
 		t.Fatal(err)
 	}
 	if err := p.extract(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if p.M.AudioSHA256 == "" || p.M.DurationSec < 3 {
-		t.Fatalf("manifest not filled: %+v", p.M)
+	if p.m.AudioSHA256 == "" || p.m.DurationSec < 3 {
+		t.Fatalf("manifest not filled: %+v", p.m)
 	}
 	if !p.extractVerify() {
 		t.Fatal("verify should pass for untouched audio")
@@ -33,11 +33,11 @@ func TestExtractVerifyAndReuse(t *testing.T) {
 		t.Fatal(err)
 	}
 	want, _ := media.SHA256File(reuse)
-	p2, _ := New(Config{Video: video, Out: filepath.Join(dir, "out2"), ReuseAudio: reuse}, quiet)
+	p2, _ := New(Config{Video: video, Out: filepath.Join(dir, "out2"), ReuseAudio: reuse}, nil, quiet)
 	if err := p2.extract(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if p2.M.AudioSHA256 != want {
+	if p2.m.AudioSHA256 != want {
 		t.Fatal("reused audio was not adopted")
 	}
 
@@ -45,11 +45,11 @@ func TestExtractVerifyAndReuse(t *testing.T) {
 	short := filepath.Join(dir, "short.ogg")
 	ffmpegOK(t, "-f", "lavfi", "-i", "sine=duration=1", "-c:a", "libopus", "-f", "ogg", short)
 	shortSum, _ := media.SHA256File(short)
-	p3, _ := New(Config{Video: video, Out: filepath.Join(dir, "out3"), ReuseAudio: short}, quiet)
+	p3, _ := New(Config{Video: video, Out: filepath.Join(dir, "out3"), ReuseAudio: short}, nil, quiet)
 	if err := p3.extract(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if p3.M.AudioSHA256 == shortSum {
+	if p3.m.AudioSHA256 == shortSum {
 		t.Fatal("mismatched audio must not be adopted")
 	}
 }

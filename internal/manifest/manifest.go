@@ -127,17 +127,17 @@ func (m *Manifest) Finish(name string, runErr error) error {
 	return m.Save()
 }
 
-// SourceChanged reports whether the video differs from what the manifest was built for.
-func (m *Manifest) SourceChanged(src Source) bool {
-	return m.Source.Path != "" && m.Source != src
-}
-
-// Reset forgets all progress and adopts a new source.
-func (m *Manifest) Reset(src Source) {
+// Adopt records the source video. If it differs from the one this manifest was built for,
+// all progress is dropped and Adopt reports true.
+func (m *Manifest) Adopt(src Source) (reset bool) {
+	reset = m.Source.Path != "" && m.Source != src
+	if reset {
+		m.AudioSHA256, m.DurationSec = "", 0
+		m.Chunks, m.Job = nil, nil
+		m.Stages = map[string]*Stage{}
+	}
 	m.Source = src
-	m.AudioSHA256, m.DurationSec = "", 0
-	m.Chunks, m.Job = nil, nil
-	m.Stages = map[string]*Stage{}
+	return reset
 }
 
 // SetJob records the in-flight batch job (nil when none) and saves.

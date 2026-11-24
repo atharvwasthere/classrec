@@ -21,11 +21,11 @@ func (p *Pipeline) write(context.Context) error {
 	if err != nil {
 		return err
 	}
-	name := filepath.Base(p.M.Source.Path)
+	name := filepath.Base(p.m.Source.Path)
 	meta := transcript.Meta{
-		Date:        transcript.RecordingDate(name, time.Unix(0, p.M.Source.MtimeNS)),
+		Date:        transcript.RecordingDate(name, time.Unix(0, p.m.Source.MtimeNS)),
 		Source:      name,
-		DurationSec: p.M.DurationSec,
+		DurationSec: p.m.DurationSec,
 	}
 	return writeFileAtomic(p.transcriptFile(), []byte(transcript.Markdown(meta, segs)))
 }

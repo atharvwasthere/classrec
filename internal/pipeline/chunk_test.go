@@ -13,7 +13,7 @@ func TestChunkStageCutsInSilenceAndCoversAudio(t *testing.T) {
 	dir := t.TempDir()
 	video := makeVideo(t, dir, 35) // silent at 8-10, 18-20, 28-30 s
 
-	p, err := New(Config{Video: video, Out: filepath.Join(dir, "out"), ChunkMaxSec: 20, SilenceWindowSec: 5}, quiet)
+	p, err := New(Config{Video: video, Out: filepath.Join(dir, "out"), ChunkMaxSec: 20, SilenceWindowSec: 5}, nil, quiet)
 	if err != nil {
 		t.Fatal(err)
 	}
@@ -25,7 +25,7 @@ func TestChunkStageCutsInSilenceAndCoversAudio(t *testing.T) {
 		t.Fatal(err)
 	}
 
-	cs := p.M.Chunks
+	cs := p.m.Chunks
 	if len(cs) != 2 {
 		t.Fatalf("want 2 chunks, got %+v", cs)
 	}
@@ -35,8 +35,8 @@ func TestChunkStageCutsInSilenceAndCoversAudio(t *testing.T) {
 	if math.Abs(cs[1].StartSec-cs[0].DurationSec) > 0.6 {
 		t.Fatalf("second chunk starts at %.2f, first ends at %.2f", cs[1].StartSec, cs[0].DurationSec)
 	}
-	if sum := cs[0].DurationSec + cs[1].DurationSec; math.Abs(sum-p.M.DurationSec) > 1 {
-		t.Fatalf("chunks total %.2fs, audio is %.2fs", sum, p.M.DurationSec)
+	if sum := cs[0].DurationSec + cs[1].DurationSec; math.Abs(sum-p.m.DurationSec) > 1 {
+		t.Fatalf("chunks total %.2fs, audio is %.2fs", sum, p.m.DurationSec)
 	}
 	if !p.chunkVerify() {
 		t.Fatal("verify should pass for untouched chunks")
@@ -54,7 +54,7 @@ func TestChunkStageCutsInSilenceAndCoversAudio(t *testing.T) {
 	if err := p.chunkStage(ctx); err != nil {
 		t.Fatal(err)
 	}
-	if p.M.Chunks[0].SHA256 != first {
+	if p.m.Chunks[0].SHA256 != first {
 		t.Fatal("an intact chunk must not be recut")
 	}
 	if !p.chunkVerify() {

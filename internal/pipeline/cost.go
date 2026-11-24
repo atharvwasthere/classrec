@@ -56,17 +56,17 @@ func (p *Pipeline) costFile() string { return p.path("cost.json") }
 func (p *Pipeline) costVerify() bool { return validJSONFile(p.costFile()) }
 
 func (p *Pipeline) cost(context.Context) error {
-	billed, money := CostOf(p.M.Chunks)
+	billed, money := CostOf(p.m.Chunks)
 	out := Cost{
-		Model:            p.Cfg.Params.Model,
-		Mode:             p.Cfg.Params.Mode,
+		Model:            p.cfg.Params.Model,
+		Mode:             p.cfg.Params.Mode,
 		AudioMinutesSent: float64(billed) / 60,
 		Money:            money,
 		RatePerMinuteINR: float64(ratePaisePerMinute) / 100,
 		GSTPercent:       gstPercent,
 		Note:             "estimate from list price; job_wall_ms is shared by all chunks of a job because Sarvam batches them together",
 	}
-	for _, c := range p.M.Chunks {
+	for _, c := range p.m.Chunks {
 		cc := ChunkCost{Index: c.Index, File: c.File, API: c.API}
 		if c.API != nil {
 			cc.BilledSeconds = int64(math.Ceil(c.DurationSec))

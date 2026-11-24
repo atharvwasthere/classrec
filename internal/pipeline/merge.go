@@ -14,9 +14,9 @@ func (p *Pipeline) segmentsFile() string { return p.path("segments.json") }
 func (p *Pipeline) mergeVerify() bool { return validJSONFile(p.segmentsFile()) }
 
 func (p *Pipeline) merge(context.Context) error {
-	parts := make([][]transcript.Segment, len(p.M.Chunks))
-	offsets := make([]float64, len(p.M.Chunks))
-	for i, c := range p.M.Chunks {
+	parts := make([][]transcript.Segment, len(p.m.Chunks))
+	offsets := make([]float64, len(p.m.Chunks))
+	for i, c := range p.m.Chunks {
 		raw, err := os.ReadFile(p.rawPath(c))
 		if err != nil {
 			return err

@@ -20,7 +20,7 @@ type Batcher interface {
 }
 
 func (p *Pipeline) cachePath(c manifest.Chunk) string {
-	return filepath.Join(p.Cfg.CacheDir, c.SHA256+"."+p.Cfg.Params.Fingerprint()+".json")
+	return filepath.Join(p.cfg.CacheDir, c.SHA256+"."+p.cfg.Params.Fingerprint()+".json")
 }
 
 func (p *Pipeline) rawPath(c manifest.Chunk) string {
@@ -33,12 +33,12 @@ func validJSONFile(path string) bool {
 }
 
 func (p *Pipeline) transcribeVerify() bool {
-	for _, c := range p.M.Chunks {
+	for _, c := range p.m.Chunks {
 		if !validJSONFile(p.rawPath(c)) {
 			return false
 		}
 	}
-	return len(p.M.Chunks) > 0
+	return len(p.m.Chunks) > 0
 }
 
 func writeFileAtomic(path string, data []byte) error {
@@ -54,18 +54,18 @@ func writeFileAtomic(path string, data []byte) error {
 
 func (p *Pipeline) transcribe(ctx context.Context) error {
 	var need []sarvam.BatchFile
-	for _, c := range p.M.Chunks {
+	for _, c := range p.m.Chunks {
 		if !validJSONFile(p.cachePath(c)) {
 			need = append(need, sarvam.BatchFile{Name: filepath.Base(c.File), Path: p.chunkPath(c)})
 		}
 	}
 	if len(need) == 0 {
-		p.Logf("all %d chunks already transcribed (cache hit), no API call", len(p.M.Chunks))
+		p.logf("all %d chunks already transcribed (cache hit), no API call", len(p.m.Chunks))
 	} else if err := p.runBatch(ctx, need); err != nil {
 		return err
 	}
 
-	for _, c := range p.M.Chunks {
+	for _, c := range p.m.Chunks {
 		raw, err := os.ReadFile(p.cachePath(c))
 		if err != nil {
 			return err
@@ -78,18 +78,18 @@ func (p *Pipeline) transcribe(ctx context.Context) error {
 }
 
 func (p *Pipeline) runBatch(ctx context.Context, need []sarvam.BatchFile) error {
-	if p.Batch == nil {
+	if p.batch == nil {
 		return errors.New("no Sarvam client configured")
 	}
 	if len(need) > maxFilesPerJob {
 		return fmt.Errorf("%d chunks exceed Sarvam's %d files per job", len(need), maxFilesPerJob)
 	}
-	results, err := p.Batch.RunBatch(ctx, sarvam.BatchRequest{
-		Params: p.Cfg.Params, Files: need, Resume: p.M.Job, Save: p.M.SetJob, Logf: p.Logf,
+	results, err := p.batch.RunBatch(ctx, sarvam.BatchRequest{
+		Params: p.cfg.Params, Files: need, Resume: p.m.Job, Save: p.m.SetJob, Logf: p.logf,
 	})
 
 	byName := map[string]manifest.Chunk{}
-	for _, c := range p.M.Chunks {
+	for _, c := range p.m.Chunks {
 		byName[filepath.Base(c.File)] = c
 	}
 	for name, r := range results {
@@ -97,11 +97,11 @@ func (p *Pipeline) runBatch(ctx context.Context, need []sarvam.BatchFile) error 
 			return werr
 		}
 		timing := manifest.APITiming{JobID: r.JobID, UploadMS: r.UploadMS, JobWallMS: r.JobWallMS, DownloadMS: r.DownloadMS}
-		if rerr := p.M.RecordAPI(name, timing); rerr != nil {
+		if rerr := p.m.RecordAPI(name, timing); rerr != nil {
 			return rerr
 		}
 	}
-	if serr := p.M.Save(); serr != nil {
+	if serr := p.m.Save(); serr != nil {
 		return serr
 	}
 	return err

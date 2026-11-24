@@ -46,13 +46,14 @@ func (c *Config) applyDefaults() {
 }
 
 type Pipeline struct {
-	Cfg   Config
-	M     *manifest.Manifest
-	Batch Batcher
-	Logf  func(string, ...any)
+	cfg   Config
+	m     *manifest.Manifest
+	batch Batcher
+	logf  func(string, ...any)
 }
 
-func New(cfg Config, logf func(string, ...any)) (*Pipeline, error) {
+// New prepares a run. batch may be nil when every transcript is already cached.
+func New(cfg Config, batch Batcher, logf func(string, ...any)) (*Pipeline, error) {
 	cfg.applyDefaults()
 	if err := os.MkdirAll(cfg.Out, 0o755); err != nil {
 		return nil, err
@@ -70,18 +71,16 @@ func New(cfg Config, logf func(string, ...any)) (*Pipeline, error) {
 		return nil, err
 	}
 	src := manifest.Source{Path: abs, Size: fi.Size(), MtimeNS: fi.ModTime().UnixNano()}
-	if m.SourceChanged(src) {
+	if m.Adopt(src) {
 		logf("source video changed since the last run, starting over")
-		m.Reset(src)
 	}
-	m.Source = src
 	if err := m.Save(); err != nil {
 		return nil, err
 	}
-	return &Pipeline{Cfg: cfg, M: m, Logf: logf}, nil
+	return &Pipeline{cfg: cfg, m: m, batch: batch, logf: logf}, nil
 }
 
-func (p *Pipeline) Stages() []Stage {
+func (p *Pipeline) stages() []Stage {
 	stages := []Stage{
 		{Name: "extract", Verify: p.extractVerify, Run: p.extract},
 		{Name: "chunk", Verify: p.chunkVerify, Run: p.chunkStage},
@@ -90,11 +89,11 @@ func (p *Pipeline) Stages() []Stage {
 		{Name: "write", Verify: p.writeVerify, Run: p.write},
 		{Name: "cost", Verify: p.costVerify, Run: p.cost},
 	}
-	if p.Cfg.MarksPath != "" {
+	if p.cfg.MarksPath != "" {
 		stages = append(stages, Stage{Name: "marks", Verify: func() bool { return false }, Run: p.marks})
 	}
 	for i, s := range stages {
-		if s.Name == p.Cfg.StopAfter {
+		if s.Name == p.cfg.StopAfter {
 			return stages[:i+1]
 		}
 	}
@@ -102,12 +101,12 @@ func (p *Pipeline) Stages() []Stage {
 }
 
 func (p *Pipeline) Run(ctx context.Context) error {
-	if err := Execute(ctx, p.M, p.Stages(), p.Logf); err != nil {
+	if err := Execute(ctx, p.m, p.stages(), p.logf); err != nil {
 		return fmt.Errorf("%w (re-run to resume from this stage)", err)
 	}
 	return nil
 }
 
 func (p *Pipeline) path(parts ...string) string {
-	return filepath.Join(append([]string{p.Cfg.Out}, parts...)...)
+	return filepath.Join(append([]string{p.cfg.Out}, parts...)...)
 }

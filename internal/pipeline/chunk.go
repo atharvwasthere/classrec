@@ -28,10 +28,10 @@ func (p *Pipeline) chunkValid(ctx context.Context, c manifest.Chunk) bool {
 }
 
 func (p *Pipeline) chunkVerify() bool {
-	if len(p.M.Chunks) == 0 {
+	if len(p.m.Chunks) == 0 {
 		return false
 	}
-	for _, c := range p.M.Chunks {
+	for _, c := range p.m.Chunks {
 		if !p.chunkValid(context.Background(), c) {
 			return false
 		}
@@ -51,26 +51,26 @@ func (p *Pipeline) reusable(ctx context.Context, prev []manifest.Chunk, i int, s
 }
 
 func (p *Pipeline) chunkStage(ctx context.Context) error {
-	total := p.M.DurationSec
+	total := p.m.DurationSec
 	var silences []media.Silence
-	if total > p.Cfg.ChunkMaxSec {
-		p.Logf("detecting silences to find cut points")
+	if total > p.cfg.ChunkMaxSec {
+		p.logf("detecting silences to find cut points")
 		var err error
-		silences, err = media.DetectSilences(ctx, p.audioFile(), p.Cfg.SilenceNoiseDB, p.Cfg.SilenceMinSec)
+		silences, err = media.DetectSilences(ctx, p.audioFile(), p.cfg.SilenceNoiseDB, p.cfg.SilenceMinSec)
 		if err != nil {
 			return err
 		}
 	}
-	spans := chunk.Plan(total, p.Cfg.ChunkMaxSec, p.Cfg.SilenceWindowSec, silences)
+	spans := chunk.Plan(total, p.cfg.ChunkMaxSec, p.cfg.SilenceWindowSec, silences)
 
 	if err := os.MkdirAll(p.path("chunks"), 0o755); err != nil {
 		return err
 	}
-	prev := p.M.Chunks
+	prev := p.m.Chunks
 	chunks := make([]manifest.Chunk, 0, len(spans))
 	for i, s := range spans {
 		if c, ok := p.reusable(ctx, prev, i, s); ok {
-			p.Logf("chunk %d: keeping existing valid file", i)
+			p.logf("chunk %d: keeping existing valid file", i)
 			chunks = append(chunks, c)
 			continue
 		}
@@ -91,15 +91,15 @@ func (p *Pipeline) chunkStage(ctx context.Context) error {
 		}
 		c.DurationSec, c.SHA256 = dur, sum
 		chunks = append(chunks, c)
-		p.Logf("chunk %d: start %.1fs, %.1fs long", i, c.StartSec, c.DurationSec)
+		p.logf("chunk %d: start %.1fs, %.1fs long", i, c.StartSec, c.DurationSec)
 	}
-	p.M.Chunks = chunks
+	p.m.Chunks = chunks
 	return p.removeStaleChunks()
 }
 
 func (p *Pipeline) removeStaleChunks() error {
 	keep := map[string]bool{}
-	for _, c := range p.M.Chunks {
+	for _, c := range p.m.Chunks {
 		keep[filepath.Base(c.File)] = true
 	}
 	entries, err := os.ReadDir(p.path("chunks"))

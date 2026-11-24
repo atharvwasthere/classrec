@@ -16,15 +16,15 @@ const durationTolerance = 1.5
 func (p *Pipeline) audioFile() string { return p.path("audio.ogg") }
 
 func (p *Pipeline) extractVerify() bool {
-	if p.M.AudioSHA256 == "" {
+	if p.m.AudioSHA256 == "" {
 		return false
 	}
 	sum, err := media.SHA256File(p.audioFile())
-	return err == nil && sum == p.M.AudioSHA256
+	return err == nil && sum == p.m.AudioSHA256
 }
 
 func (p *Pipeline) extract(ctx context.Context) error {
-	videoDur, err := media.Probe(ctx, p.Cfg.Video)
+	videoDur, err := media.Probe(ctx, p.cfg.Video)
 	if err != nil {
 		return err
 	}
@@ -33,8 +33,8 @@ func (p *Pipeline) extract(ctx context.Context) error {
 		return err
 	}
 	if !adopted {
-		p.Logf("extracting audio with ffmpeg (mono opus 32k)")
-		if err := media.ExtractAudio(ctx, p.Cfg.Video, p.audioFile()); err != nil {
+		p.logf("extracting audio with ffmpeg (mono opus 32k)")
+		if err := media.ExtractAudio(ctx, p.cfg.Video, p.audioFile()); err != nil {
 			return err
 		}
 	}
@@ -49,21 +49,21 @@ func (p *Pipeline) extract(ctx context.Context) error {
 	if err != nil {
 		return err
 	}
-	p.M.AudioSHA256, p.M.DurationSec = sum, dur
+	p.m.AudioSHA256, p.m.DurationSec = sum, dur
 	return nil
 }
 
 func (p *Pipeline) adoptReusableAudio(ctx context.Context, videoDur float64) (bool, error) {
-	if p.Cfg.ReuseAudio == "" {
+	if p.cfg.ReuseAudio == "" {
 		return false, nil
 	}
-	dur, err := media.Probe(ctx, p.Cfg.ReuseAudio)
+	dur, err := media.Probe(ctx, p.cfg.ReuseAudio)
 	if err != nil || math.Abs(dur-videoDur) > durationTolerance {
-		p.Logf("not reusing %s (duration %.1fs vs video %.1fs), re-extracting", p.Cfg.ReuseAudio, dur, videoDur)
+		p.logf("not reusing %s (duration %.1fs vs video %.1fs), re-extracting", p.cfg.ReuseAudio, dur, videoDur)
 		return false, nil
 	}
-	p.Logf("reusing %s (duration matches the video)", p.Cfg.ReuseAudio)
-	return true, copyFile(p.Cfg.ReuseAudio, p.audioFile())
+	p.logf("reusing %s (duration matches the video)", p.cfg.ReuseAudio)
+	return true, copyFile(p.cfg.ReuseAudio, p.audioFile())
 }
 
 func copyFile(src, dst string) error {

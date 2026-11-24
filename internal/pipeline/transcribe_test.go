@@ -21,15 +21,14 @@ type fixture struct {
 
 func (f *fixture) pipeline(t *testing.T) *Pipeline {
 	t.Helper()
-	p, err := New(f.cfg, quiet)
-	if err != nil {
-		t.Fatal(err)
-	}
 	c := sarvam.New("test-key")
 	c.BaseURL, c.PollEvery = f.srv.URL, time.Millisecond
 	c.Retry = sarvam.RetryPolicy{Max: 2, Base: time.Millisecond, MaxDelay: time.Millisecond,
 		Sleep: func(context.Context, time.Duration) error { return nil }}
-	p.Batch = c
+	p, err := New(f.cfg, c, quiet)
+	if err != nil {
+		t.Fatal(err)
+	}
 	return p
 }
 

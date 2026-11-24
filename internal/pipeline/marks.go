@@ -33,7 +33,7 @@ func readMarks(path string) ([]float64, error) {
 
 // marks is cheap and the marks file may change between runs, so it always reruns.
 func (p *Pipeline) marks(context.Context) error {
-	marks, err := readMarks(p.Cfg.MarksPath)
+	marks, err := readMarks(p.cfg.MarksPath)
 	if err != nil {
 		return err
 	}

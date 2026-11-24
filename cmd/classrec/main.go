@@ -82,11 +82,10 @@ func run(args []string) error {
 	p, err := pipeline.New(pipeline.Config{
 		Video: video, Out: *out, MarksPath: *marks, ReuseAudio: *reuse, StopAfter: *stopAfter, CacheDir: *cache,
 		Params: sarvam.JobParams{Model: *model, Mode: *mode, LanguageCode: *lang, WithTimestamps: true},
-	}, logf)
+	}, &lazyBatch{envFile: *envFile}, logf)
 	if err != nil {
 		return err
 	}
-	p.Batch = &lazyBatch{envFile: *envFile}
 
 	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
 	defer stop()
