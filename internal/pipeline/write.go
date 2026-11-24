@@ -5,6 +5,7 @@ import (
 	"os"
 	"time"
 
+	"classrec/internal/fsx"
 	"classrec/internal/transcript"
 )
 
@@ -21,5 +22,5 @@ func (p *Pipeline) write(context.Context) error {
 		return err
 	}
 	md := transcript.Markdown(p.m.Source.Path, time.Unix(0, p.m.Source.MtimeNS), p.m.DurationSec, segs)
-	return writeFileAtomic(p.transcriptFile(), []byte(md))
+	return fsx.WriteFileAtomic(p.transcriptFile(), []byte(md))
 }

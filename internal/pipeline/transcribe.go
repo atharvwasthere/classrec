@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 
+	"classrec/internal/fsx"
 	"classrec/internal/manifest"
 	"classrec/internal/sarvam"
 )
@@ -41,17 +42,6 @@ func (p *Pipeline) transcribeVerify() bool {
 	return len(p.m.Chunks) > 0
 }
 
-func writeFileAtomic(path string, data []byte) error {
-	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
-		return err
-	}
-	tmp := path + ".part"
-	if err := os.WriteFile(tmp, data, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, path)
-}
-
 func (p *Pipeline) transcribe(ctx context.Context) error {
 	var need []sarvam.BatchFile
 	for _, c := range p.m.Chunks {
@@ -70,7 +60,7 @@ func (p *Pipeline) transcribe(ctx context.Context) error {
 		if err != nil {
 			return err
 		}
-		if err := writeFileAtomic(p.rawPath(c), raw); err != nil {
+		if err := fsx.WriteFileAtomic(p.rawPath(c), raw); err != nil {
 			return err
 		}
 	}
@@ -93,7 +83,7 @@ func (p *Pipeline) runBatch(ctx context.Context, need []sarvam.BatchFile) error 
 		byName[filepath.Base(c.File)] = c
 	}
 	for name, r := range results {
-		if werr := writeFileAtomic(p.cachePath(byName[name]), r.Raw); werr != nil {
+		if werr := fsx.WriteFileAtomic(p.cachePath(byName[name]), r.Raw); werr != nil {
 			return werr
 		}
 		timing := manifest.APITiming{JobID: r.JobID, UploadMS: r.UploadMS, JobWallMS: r.JobWallMS, DownloadMS: r.DownloadMS}

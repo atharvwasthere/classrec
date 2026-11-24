@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"os"
 
+	"classrec/internal/fsx"
 	"classrec/internal/transcript"
 )
 
@@ -41,5 +42,5 @@ func (p *Pipeline) marks(context.Context) error {
 	if err != nil {
 		return err
 	}
-	return writeFileAtomic(p.path("marks.md"), []byte(transcript.MarksMarkdown(marks, segs, marksBeforeSec, marksAfterSec)))
+	return fsx.WriteFileAtomic(p.path("marks.md"), []byte(transcript.MarksMarkdown(marks, segs, marksBeforeSec, marksAfterSec)))
 }

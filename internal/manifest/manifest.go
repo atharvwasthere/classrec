@@ -8,6 +8,7 @@ import (
 	"path/filepath"
 	"time"
 
+	"classrec/internal/fsx"
 	"classrec/internal/sarvam"
 )
 
@@ -90,14 +91,7 @@ func (m *Manifest) Save() error {
 	if err != nil {
 		return err
 	}
-	tmp := m.path + ".tmp"
-	if err := os.MkdirAll(filepath.Dir(m.path), 0o755); err != nil {
-		return err
-	}
-	if err := os.WriteFile(tmp, b, 0o644); err != nil {
-		return err
-	}
-	return os.Rename(tmp, m.path)
+	return fsx.WriteFileAtomic(m.path, b)
 }
 
 func (m *Manifest) IsDone(name string) bool {

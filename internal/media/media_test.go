@@ -16,7 +16,7 @@ func TestParseSilences(t *testing.T) {
 [silencedetect @ 0x1] silence_end: 30.6 | silence_duration: 0.6
 [silencedetect @ 0x1] silence_start: 99.9`
 	want := []Silence{{10.5, 12.25}, {30, 30.6}}
-	if got := ParseSilences(stderr); !reflect.DeepEqual(got, want) {
+	if got := parseSilences(stderr); !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %v want %v", got, want)
 	}
 }

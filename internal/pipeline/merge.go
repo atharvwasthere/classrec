@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 
+	"classrec/internal/fsx"
 	"classrec/internal/transcript"
 )
 
@@ -30,7 +31,7 @@ func (p *Pipeline) merge(context.Context) error {
 	if err != nil {
 		return err
 	}
-	return writeFileAtomic(p.segmentsFile(), b)
+	return fsx.WriteFileAtomic(p.segmentsFile(), b)
 }
 
 func (p *Pipeline) loadSegments() ([]transcript.Segment, error) {

@@ -12,7 +12,7 @@ func TestCostOfTheTwoHourFiveMinuteClass(t *testing.T) {
 	chunks := []manifest.Chunk{
 		{DurationSec: 3600, API: api}, {DurationSec: 3600, API: api}, {DurationSec: 299.4, API: api},
 	}
-	billed, m := CostOf(chunks)
+	billed, m := costOf(chunks)
 	if billed != 7500 {
 		t.Fatalf("billed %d seconds, want 7500 (each chunk rounded up)", billed)
 	}
@@ -23,7 +23,7 @@ func TestCostOfTheTwoHourFiveMinuteClass(t *testing.T) {
 
 func TestCostIgnoresChunksServedFromCache(t *testing.T) {
 	chunks := []manifest.Chunk{{DurationSec: 600, API: &manifest.APITiming{}}, {DurationSec: 600}}
-	if billed, _ := CostOf(chunks); billed != 600 {
+	if billed, _ := costOf(chunks); billed != 600 {
 		t.Fatalf("a cached chunk was never sent, got %d billed seconds", billed)
 	}
 }

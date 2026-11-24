@@ -68,8 +68,8 @@ var (
 	silenceEnd   = regexp.MustCompile(`silence_end: (-?[0-9.]+)`)
 )
 
-// ParseSilences reads ffmpeg silencedetect stderr. A silence still open at EOF is dropped.
-func ParseSilences(stderr string) []Silence {
+// parseSilences reads ffmpeg silencedetect stderr. A silence still open at EOF is dropped.
+func parseSilences(stderr string) []Silence {
 	var res []Silence
 	open := -1.0
 	for _, line := range strings.Split(stderr, "\n") {
@@ -91,7 +91,7 @@ func DetectSilences(ctx context.Context, audio string, noiseDB, minDur float64) 
 	if err != nil {
 		return nil, err
 	}
-	return ParseSilences(stderr), nil
+	return parseSilences(stderr), nil
 }
 
 // Cut re-encodes [start, start+dur) to a standalone opus file. Stream copy is not an option:
