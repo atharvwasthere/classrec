@@ -8,6 +8,7 @@ import (
 	"encoding/hex"
 	"fmt"
 	"io"
+	"math"
 	"os"
 	"os/exec"
 	"regexp"
@@ -93,15 +94,46 @@ func DetectSilences(ctx context.Context, audio string, noiseDB, minDur float64) 
 	return ParseSilences(stderr), nil
 }
 
-// Cut copies [start, start+dur) without re-encoding. Short ogg pages keep the cut accurate to ~20 ms.
+// Cut re-encodes [start, start+dur) to a standalone opus file. Stream copy is not an option:
+// ogg/opus copy either starts up to a page early or writes negative granule positions (invalid
+// files that Sarvam rejects), so only a re-encode is both valid and sample-accurate.
 func Cut(ctx context.Context, in, out string, start, dur float64) error {
 	tmp := out + ".part"
 	defer os.Remove(tmp)
 	if _, _, err := run(ctx, "ffmpeg", "-y", "-v", "error", "-ss", fmt.Sprintf("%.3f", start),
-		"-i", in, "-t", fmt.Sprintf("%.3f", dur), "-c", "copy", "-page_duration", "20000", "-f", "ogg", tmp); err != nil {
+		"-i", in, "-t", fmt.Sprintf("%.3f", dur), "-ac", "1", "-c:a", "libopus", "-b:a", "32k", "-f", "ogg", tmp); err != nil {
 		return err
 	}
 	return os.Rename(tmp, out)
+}
+
+// ProbeClean is Probe for files we upload: it also fails when ffprobe prints any complaint
+// or the stream does not start at 0, both of which mean the file is malformed.
+func ProbeClean(ctx context.Context, path string) (float64, error) {
+	out, stderr, err := run(ctx, "ffprobe", "-v", "error", "-show_entries", "format=start_time,duration",
+		"-of", "default=noprint_wrappers=1", path)
+	if err != nil {
+		return 0, err
+	}
+	if s := strings.TrimSpace(stderr); s != "" {
+		return 0, fmt.Errorf("%s is malformed: %s", path, tail(s))
+	}
+	var start, dur float64
+	var haveStart, haveDur bool
+	for _, line := range strings.Split(out, "\n") {
+		k, v, _ := strings.Cut(strings.TrimSpace(line), "=")
+		f, perr := strconv.ParseFloat(v, 64)
+		switch {
+		case k == "start_time" && perr == nil:
+			start, haveStart = f, true
+		case k == "duration" && perr == nil:
+			dur, haveDur = f, true
+		}
+	}
+	if !haveStart || !haveDur || math.Abs(start) > 0.1 {
+		return 0, fmt.Errorf("%s is malformed: start_time=%v duration=%v", path, start, dur)
+	}
+	return dur, nil
 }
 
 func SHA256File(path string) (string, error) {

@@ -47,4 +47,17 @@ func TestChunkStageCutsInSilenceAndCoversAudio(t *testing.T) {
 	if p.chunkVerify() {
 		t.Fatal("verify must fail once a chunk changes")
 	}
+
+	// recutting repairs the broken chunk but keeps the intact one byte for byte,
+	// so an already-transcribed chunk keeps its cache entry
+	first := cs[0].SHA256
+	if err := p.chunkStage(ctx); err != nil {
+		t.Fatal(err)
+	}
+	if p.M.Chunks[0].SHA256 != first {
+		t.Fatal("an intact chunk must not be recut")
+	}
+	if !p.chunkVerify() {
+		t.Fatal("the broken chunk should have been recut")
+	}
 }
