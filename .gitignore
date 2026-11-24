@@ -3,3 +3,4 @@ out/
 docs-src/
 *.test
 /classrec
+.DS_Store
