@@ -5,3 +5,4 @@ docs-src/
 /classrec
 .DS_Store
 *.log
+dist/*.exe
