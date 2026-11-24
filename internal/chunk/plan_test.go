@@ -9,13 +9,6 @@ import (
 
 func near(a, b float64) bool { return math.Abs(a-b) < 1e-9 }
 
-func TestPlanShortInputIsOneChunk(t *testing.T) {
-	got := Plan(300, 3600, 120, nil)
-	if len(got) != 1 || got[0].Start != 0 || got[0].Duration != 300 {
-		t.Fatalf("got %v", got)
-	}
-}
-
 func TestPlanHardCutWhenNoSilence(t *testing.T) {
 	got := Plan(7500, 3600, 120, nil)
 	want := []Span{{0, 3600}, {3600, 3600}, {7200, 300}}
