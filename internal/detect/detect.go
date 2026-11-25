@@ -18,6 +18,9 @@ type Sample struct {
 	Time    time.Time `json:"t"`
 	Windows []Window  `json:"windows"`
 	Mic     []MicUse  `json:"mic"`
+	// AppAudioLive is true when OBS hears sound from the class app's audio input, which the
+	// recorder fills in while it records. Absent from logs made before the recorder existed.
+	AppAudioLive bool `json:"audio,omitempty"`
 }
 
 // Window is a top-level window and the full path of the exe that owns it.
@@ -68,11 +71,12 @@ type Observation struct {
 	MeetWindow string // title of an Edge window showing Meet, "" if none
 	ZoomMic    bool
 	EdgeMic    bool
+	AppAudio   bool // the class app's audio is audible in OBS
 }
 
 // Classify reduces a Sample to the signals the state machine uses.
 func Classify(s Sample) Observation {
-	var o Observation
+	o := Observation{AppAudio: s.AppAudioLive}
 	for _, w := range s.Windows {
 		if o.ZoomWindow == "" && isZoomMeetingWindow(w) {
 			o.ZoomWindow = w.Title
@@ -165,7 +169,7 @@ type Config struct {
 	Grace time.Duration // recording stops only after the class has been gone this long
 }
 
-var DefaultConfig = Config{Hold: 10 * time.Second, Grace: 3 * time.Minute}
+var DefaultConfig = Config{Hold: 10 * time.Second, Grace: 5 * time.Minute}
 
 // EventKind says whether recording should start or stop.
 type EventKind string
@@ -278,8 +282,13 @@ func (m *Machine) reset() {
 	m.Title = ""
 }
 
-// classStillOn reports whether the app being recorded still shows its meeting window or holds the mic.
+// classStillOn reports whether the class is still going: the app shows its meeting window, holds the
+// mic, or its audio is audible in OBS. Any one is enough, so a closed window with the teacher still
+// talking keeps the recording, and so does a muted mic.
 func (m *Machine) classStillOn(o Observation) bool {
+	if o.AppAudio {
+		return true
+	}
 	if m.App == Zoom {
 		return o.ZoomWindow != "" || o.ZoomMic
 	}

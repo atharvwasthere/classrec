@@ -9,6 +9,8 @@ import (
 	"fmt"
 	"net/http"
 	"net/http/httptest"
+	"os"
+	"path/filepath"
 	"strings"
 	"sync"
 
@@ -46,6 +48,15 @@ type Server struct {
 	renderSkipped int
 	outputSkipped int
 
+	recordDir     string
+	recordPath    string // file of the recording in progress
+	profiles      []string
+	profile       string
+	params        map[string]map[string]string // profile -> "category/name" -> value
+	video         map[string]any
+	muted         map[string]bool
+	specialInputs map[string]string
+
 	scenes       map[string]bool
 	sceneOrder   []string
 	inputs       map[string]*Input
@@ -55,7 +66,14 @@ type Server struct {
 
 // New starts a fake OBS that requires password.
 func New(password string) *Server {
-	s := &Server{Password: password, scenes: map[string]bool{}, inputs: map[string]*Input{}}
+	s := &Server{
+		Password: password, scenes: map[string]bool{}, inputs: map[string]*Input{},
+		profiles: []string{"Untitled"}, profile: "Untitled",
+		params:        map[string]map[string]string{"Untitled": {}},
+		video:         map[string]any{"fpsNumerator": 30, "fpsDenominator": 1, "baseWidth": 1920, "baseHeight": 1080, "outputWidth": 1920, "outputHeight": 1080},
+		muted:         map[string]bool{},
+		specialInputs: map[string]string{"desktop1": "Desktop Audio", "mic1": "Mic/Aux"},
+	}
 	s.srv = httptest.NewServer(http.HandlerFunc(s.serve))
 	return s
 }
@@ -92,6 +110,55 @@ func (s *Server) Recording() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.recording
+}
+
+// Kill imitates obs64.exe dying: every connection drops and the recording is lost,
+// but the file it was writing stays on disk.
+func (s *Server) Kill() {
+	s.mu.Lock()
+	s.recording = false
+	s.mu.Unlock()
+	s.DropConnections()
+}
+
+// IsMuted reports whether the input is muted.
+func (s *Server) IsMuted(name string) bool {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.muted[name]
+}
+
+// Param is a profile.ini value of the named profile.
+func (s *Server) Param(profile, category, name string) (string, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	v, ok := s.params[profile][category+"/"+name]
+	return v, ok
+}
+
+// Profile is the current profile's name.
+func (s *Server) Profile() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.profile
+}
+
+// Video is the current video settings.
+func (s *Server) Video() map[string]any {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := map[string]any{}
+	for k, v := range s.video {
+		out[k] = v
+	}
+	return out
+}
+
+// RecordDirectory is the folder the fake records into.
+func (s *Server) RecordDirectory() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.recordDir
 }
 
 // CurrentScene is the scene OBS is set to record.
@@ -285,14 +352,95 @@ func (s *Server) handleRequest(requestType string, requestData json.RawMessage) 
 		}
 		s.recording = true
 		s.recordings++
+		name := fmt.Sprintf("recording-%d.mkv", s.recordings)
+		s.recordPath = filepath.Join(s.recordDir, name)
+		if s.recordDir == "" {
+			s.recordPath = `C:\Users\Admin\Class Recordings\_staging\` + name
+		} else if _, err := os.Stat(s.recordDir); err == nil {
+			os.WriteFile(s.recordPath, []byte("fake mkv "+name), 0o644) // OBS creates the file as soon as it starts
+		}
 		return true, success, nil
 	case "StopRecord":
 		if !s.recording {
 			return false, codeOutputNotRunning, nil
 		}
 		s.recording = false
-		path := fmt.Sprintf(`C:\Users\Admin\Class Recordings\_staging\recording-%d.mkv`, s.recordings)
-		return true, success, map[string]any{"outputPath": path}
+		return true, success, map[string]any{"outputPath": s.recordPath}
+	case "GetRecordDirectory":
+		return true, success, map[string]any{"recordDirectory": s.recordDir}
+	case "SetRecordDirectory":
+		var d struct {
+			Dir string `json:"recordDirectory"`
+		}
+		json.Unmarshal(requestData, &d)
+		s.recordDir = d.Dir
+		return true, success, nil
+	case "GetProfileList":
+		return true, success, map[string]any{"currentProfileName": s.profile, "profiles": s.profiles}
+	case "CreateProfile", "SetCurrentProfile":
+		var p struct {
+			Name string `json:"profileName"`
+		}
+		json.Unmarshal(requestData, &p)
+		known := s.params[p.Name] != nil
+		if requestType == "CreateProfile" && known {
+			return false, codeResourceAlreadyExists, nil
+		}
+		if requestType == "SetCurrentProfile" && !known {
+			return false, codeResourceNotFound, nil
+		}
+		if !known {
+			s.params[p.Name] = map[string]string{}
+			s.profiles = append(s.profiles, p.Name)
+		}
+		s.profile = p.Name
+		return true, success, nil
+	case "SetProfileParameter", "GetProfileParameter":
+		var p struct {
+			Category string `json:"parameterCategory"`
+			Name     string `json:"parameterName"`
+			Value    string `json:"parameterValue"`
+		}
+		json.Unmarshal(requestData, &p)
+		key := p.Category + "/" + p.Name
+		if requestType == "SetProfileParameter" {
+			s.params[s.profile][key] = p.Value
+			return true, success, nil
+		}
+		value, set := s.params[s.profile][key]
+		if !set {
+			return true, success, map[string]any{"parameterValue": nil}
+		}
+		return true, success, map[string]any{"parameterValue": value}
+	case "GetVideoSettings":
+		return true, success, s.video
+	case "SetVideoSettings":
+		if s.recording {
+			return false, codeOutputRunning, nil
+		}
+		var v map[string]any
+		json.Unmarshal(requestData, &v)
+		for k, val := range v {
+			s.video[k] = val
+		}
+		return true, success, nil
+	case "GetSpecialInputs":
+		out := map[string]any{}
+		for k, v := range s.specialInputs {
+			out[k] = v
+		}
+		return true, success, out
+	case "SetInputMute", "GetInputMute":
+		var m struct {
+			Name  string `json:"inputName"`
+			Muted bool   `json:"inputMuted"`
+		}
+		json.Unmarshal(requestData, &m)
+		if requestType == "SetInputMute" {
+			s.muted[m.Name] = m.Muted
+			return true, success, nil
+		}
+		return true, success, map[string]any{"inputMuted": s.muted[m.Name]}
 	case "GetRecordStatus":
 		return true, success, map[string]any{"outputActive": s.recording, "outputPaused": false, "outputDuration": 0}
 	case "GetStats":

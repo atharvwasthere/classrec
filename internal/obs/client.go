@@ -206,6 +206,109 @@ func (c *Client) SetCurrentScene(ctx context.Context, name string) error {
 	return c.call(ctx, "SetCurrentProgramScene", map[string]any{"sceneName": name}, nil)
 }
 
+// SetRecordDirectory points OBS's recordings at dir.
+func (c *Client) SetRecordDirectory(ctx context.Context, dir string) error {
+	return c.call(ctx, "SetRecordDirectory", map[string]any{"recordDirectory": dir}, nil)
+}
+
+// RecordDirectory returns the folder OBS records into.
+func (c *Client) RecordDirectory(ctx context.Context) (string, error) {
+	var response struct {
+		Directory string `json:"recordDirectory"`
+	}
+	err := c.call(ctx, "GetRecordDirectory", nil, &response)
+	return response.Directory, err
+}
+
+// Profiles lists OBS's profile names and says which one is current.
+func (c *Client) Profiles(ctx context.Context) (names []string, current string, err error) {
+	var response struct {
+		Current  string   `json:"currentProfileName"`
+		Profiles []string `json:"profiles"`
+	}
+	err = c.call(ctx, "GetProfileList", nil, &response)
+	return response.Profiles, response.Current, err
+}
+
+// CreateProfile adds a profile. OBS switches to the new profile.
+func (c *Client) CreateProfile(ctx context.Context, name string) error {
+	return c.call(ctx, "CreateProfile", map[string]any{"profileName": name}, nil)
+}
+
+// SetCurrentProfile switches OBS to an existing profile.
+func (c *Client) SetCurrentProfile(ctx context.Context, name string) error {
+	return c.call(ctx, "SetCurrentProfile", map[string]any{"profileName": name}, nil)
+}
+
+// SetProfileParameter writes one profile.ini value of the current profile.
+func (c *Client) SetProfileParameter(ctx context.Context, category, name, value string) error {
+	data := map[string]any{"parameterCategory": category, "parameterName": name, "parameterValue": value}
+	return c.call(ctx, "SetProfileParameter", data, nil)
+}
+
+// ProfileParameter reads one profile.ini value of the current profile; "" if it is not set.
+func (c *Client) ProfileParameter(ctx context.Context, category, name string) (string, error) {
+	var response struct {
+		Value *string `json:"parameterValue"`
+	}
+	err := c.call(ctx, "GetProfileParameter", map[string]any{"parameterCategory": category, "parameterName": name}, &response)
+	if response.Value == nil {
+		return "", err
+	}
+	return *response.Value, err
+}
+
+// VideoSettings is the canvas, output size and frame rate of the current profile.
+type VideoSettings struct {
+	FPSNumerator   int `json:"fpsNumerator"`
+	FPSDenominator int `json:"fpsDenominator"`
+	BaseWidth      int `json:"baseWidth"`
+	BaseHeight     int `json:"baseHeight"`
+	OutputWidth    int `json:"outputWidth"`
+	OutputHeight   int `json:"outputHeight"`
+}
+
+// SetVideoSettings sets the canvas, output size and frame rate. OBS refuses while an output is active.
+func (c *Client) SetVideoSettings(ctx context.Context, v VideoSettings) error {
+	return c.call(ctx, "SetVideoSettings", v, nil)
+}
+
+// VideoSettings reads the current video settings.
+func (c *Client) VideoSettings(ctx context.Context) (VideoSettings, error) {
+	var v VideoSettings
+	err := c.call(ctx, "GetVideoSettings", nil, &v)
+	return v, err
+}
+
+// SetInputMute mutes or unmutes an input everywhere it is used.
+func (c *Client) SetInputMute(ctx context.Context, name string, muted bool) error {
+	return c.call(ctx, "SetInputMute", map[string]any{"inputName": name, "inputMuted": muted}, nil)
+}
+
+// InputMuted reports whether the input is muted.
+func (c *Client) InputMuted(ctx context.Context, name string) (bool, error) {
+	var response struct {
+		Muted bool `json:"inputMuted"`
+	}
+	err := c.call(ctx, "GetInputMute", map[string]any{"inputName": name}, &response)
+	return response.Muted, err
+}
+
+// GlobalAudioInputs returns the names of the global Desktop Audio and Mic/Aux inputs OBS has set up.
+func (c *Client) GlobalAudioInputs(ctx context.Context) ([]string, error) {
+	var response map[string]*string
+	if err := c.call(ctx, "GetSpecialInputs", nil, &response); err != nil {
+		return nil, err
+	}
+	var names []string
+	for _, key := range []string{"desktop1", "desktop2", "mic1", "mic2", "mic3", "mic4"} {
+		if name := response[key]; name != nil && *name != "" {
+			names = append(names, *name)
+		}
+	}
+	return names, nil
+}
+
 // InputLevel returns the latest level of the named input; ok is false until OBS has reported one.
 func (c *Client) InputLevel(inputName string) (level InputLevel, ok bool) {
 	c.levelsMu.Lock()
