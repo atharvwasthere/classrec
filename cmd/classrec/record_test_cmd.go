@@ -24,6 +24,7 @@ func runRecordTest(ctx context.Context, args []string) error {
 	seconds := fs.Int("seconds", 30, "")
 	root := fs.String("root", defaultRoot, "")
 	obsURL := fs.String("obs-url", "ws://localhost:4455", "")
+	profile := fs.String("profile", recorder.DefaultProfileName, "") // another name tests first-run setup on a fresh profile
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -42,7 +43,7 @@ func runRecordTest(ctx context.Context, args []string) error {
 	fmt.Fprintf(os.Stderr, "recording %q (%s) for %d s\n", target.Title, target.Exe, *seconds)
 
 	logf := func(format string, a ...any) { fmt.Fprintf(os.Stderr, format+"\n", a...) }
-	rec, err := newRecorder(*root, *obsURL, logf)
+	rec, err := newRecorder(*root, *obsURL, *profile, logf)
 	if err != nil {
 		return err
 	}

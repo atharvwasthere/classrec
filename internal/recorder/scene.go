@@ -4,12 +4,17 @@ import (
 	"context"
 	"fmt"
 	"strings"
+	"time"
 
 	"classrec/internal/detect"
 )
 
 const (
+	codeOutputRunning    = 500 // obs-websocket: StartRecord while already recording
 	codeOutputNotRunning = 501 // obs-websocket: StopRecord while not recording
+
+	startCheckAttempts = 10
+	startCheckEvery    = 500 * time.Millisecond
 
 	windowPriorityExe = 2 // OBS window capture: if the title is gone, match the exe
 

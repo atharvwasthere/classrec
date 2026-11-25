@@ -34,6 +34,18 @@ var (
 	})
 )
 
+var procGetSystemMetrics = user32.NewProc("GetSystemMetrics")
+
+// PrimaryDisplay is the primary display's size in true pixels. It relies on classrec's manifest
+// making the process DPI aware; without it Windows would report the scaled size (1536x864 for a
+// 1920x1080 screen at 125%). It returns 0, 0 if Windows will not say.
+func PrimaryDisplay() (width, height int) {
+	const smCXScreen, smCYScreen = 0, 1
+	w, _, _ := procGetSystemMetrics.Call(smCXScreen)
+	h, _, _ := procGetSystemMetrics.Call(smCYScreen)
+	return int(w), int(h)
+}
+
 // Snapshot observes all titled top-level windows and the mic entries of interest.
 func Snapshot(now time.Time) detect.Sample {
 	return detect.Sample{

@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"strings"
 	"time"
+	"unicode"
 
 	"classrec/internal/desktop"
 	"classrec/internal/detect"
@@ -31,7 +32,7 @@ func runRecordLoop(ctx context.Context, opts recordOptions) error {
 	}
 	defer closeLog()
 
-	rec, err := newRecorder(opts.Root, opts.OBSURL, logf)
+	rec, err := newRecorder(opts.Root, opts.OBSURL, recorder.DefaultProfileName, logf)
 	if err != nil {
 		return err
 	}
@@ -124,14 +125,15 @@ func finishOnExit(rec *recorder.Recorder, opts recordOptions, logf func(string, 
 
 // newRecorder builds the recorder the agent and record-test share: OBS at url, with its password
 // from the .obs-password file next to classrec.
-func newRecorder(root, url string, logf func(string, ...any)) (*recorder.Recorder, error) {
+func newRecorder(root, url, profile string, logf func(string, ...any)) (*recorder.Recorder, error) {
 	password, err := readOBSPassword()
 	if err != nil {
 		return nil, err
 	}
 	return recorder.New(recorder.Config{
-		Root:       root,
-		ProfileDir: obsProfileDir(recorder.DefaultProfileName),
+		Root:        root,
+		ProfileName: profile,
+		ProfileDir:  obsProfileDir(profile),
 		Dial: func(ctx context.Context) (recorder.OBS, error) {
 			client, err := obs.Connect(ctx, url, password)
 			if err != nil {
@@ -139,9 +141,10 @@ func newRecorder(root, url string, logf func(string, ...any)) (*recorder.Recorde
 			}
 			return client, nil
 		},
-		OBSRunning: recorder.OBSRunning,
-		LaunchOBS:  recorder.LauncherFor(recorder.DefaultOBSBin),
-		Log:        logf,
+		OBSRunning:  recorder.OBSRunning,
+		LaunchOBS:   recorder.LauncherFor(recorder.DefaultOBSBin),
+		DisplaySize: desktop.PrimaryDisplay,
+		Log:         logf,
 	}), nil
 }
 
@@ -177,7 +180,7 @@ func obsProfileDir(name string) string {
 	if appData == "" {
 		return ""
 	}
-	return filepath.Join(appData, "obs-studio", "basic", "profiles", name)
+	return filepath.Join(appData, "obs-studio", "basic", "profiles", obsFolderName(name))
 }
 
 // openAgentLog returns a logger that writes to stderr and to logs\agent-<date>.log next to classrec.
@@ -196,4 +199,15 @@ func openAgentLog() (logf func(string, ...any), closeLog func(), err error) {
 		f.WriteString(line)
 	}
 	return logf, func() { f.Close() }, nil
+}
+
+// obsFolderName is the folder OBS makes for a profile: it keeps letters, digits, spaces and
+// underscores ("classrec-t1" becomes "classrect1").
+func obsFolderName(profile string) string {
+	return strings.Map(func(r rune) rune {
+		if unicode.IsLetter(r) || unicode.IsDigit(r) || r == ' ' || r == '_' {
+			return r
+		}
+		return -1
+	}, profile)
 }

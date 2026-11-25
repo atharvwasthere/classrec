@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"time"
 
 	"classrec/internal/fsx"
 	"classrec/internal/obs"
@@ -20,9 +21,14 @@ const (
 	DefaultEncoder = "obs_qsv11_v2"
 
 	outputHeight = 720
-	outputFPS    = 15
-	bitrateKbps  = 1000
-	keyframeSecs = 2
+
+	// profileSettle is how long OBS needs to load a profile and rebuild its outputs.
+	profileSettle       = 2 * time.Second
+	profileWaitEvery    = 250 * time.Millisecond
+	profileWaitAttempts = 40
+	outputFPS           = 15
+	bitrateKbps         = 1000
+	keyframeSecs        = 2
 )
 
 // param is one profile.ini value.
@@ -54,12 +60,23 @@ func (r *Recorder) ApplyProfile(ctx context.Context) (problems []string, err err
 		err = c.CreateProfile(ctx, r.cfg.ProfileName) // OBS switches to it
 	case current != r.cfg.ProfileName:
 		err = c.SetCurrentProfile(ctx, r.cfg.ProfileName)
+	default:
+		current = "" // nothing to wait for
 	}
 	if err != nil {
 		return nil, fmt.Errorf("selecting the %s profile: %w", r.cfg.ProfileName, err)
 	}
+	if current != "" || !contains(names, r.cfg.ProfileName) {
+		// OBS answers before it has finished switching, and settings sent in between land on the
+		// profile it is leaving: a fresh profile then keeps its defaults.
+		if err := r.waitForProfile(ctx, r.cfg.ProfileName); err != nil {
+			return nil, err
+		}
+	}
 
+	reload := false
 	for _, p := range profileParams(r.cfg.Encoder) {
+		before, _ := c.ProfileParameter(ctx, p.Category, p.Name)
 		if err := c.SetProfileParameter(ctx, p.Category, p.Name, p.Value); err != nil {
 			problems = append(problems, fmt.Sprintf("%s/%s: obs would not set it: %v", p.Category, p.Name, err))
 			continue
@@ -68,29 +85,61 @@ func (r *Recorder) ApplyProfile(ctx context.Context) (problems []string, err err
 		if err != nil || got != p.Value {
 			problems = append(problems, fmt.Sprintf("%s/%s: wanted %q, obs has %q", p.Category, p.Name, p.Value, got))
 		}
+		reload = reload || before != p.Value
 	}
-
-	problems = append(problems, r.applyVideo(ctx)...)
-
-	changed, err := r.writeEncoderSettings()
+	encoderChanged, err := r.writeEncoderSettings()
 	if err != nil {
 		problems = append(problems, "recordEncoder.json: "+err.Error())
 	}
-	if changed {
-		// OBS reads recordEncoder.json when it builds its outputs, which happens on a profile switch.
-		for _, other := range names {
-			if other != r.cfg.ProfileName {
-				if err := c.SetCurrentProfile(ctx, other); err == nil {
-					err = c.SetCurrentProfile(ctx, r.cfg.ProfileName)
-				}
-				if err != nil {
-					return problems, fmt.Errorf("reloading the %s profile: %w", r.cfg.ProfileName, err)
-				}
-				break
-			}
+	reload = reload || encoderChanged
+
+	if reload {
+		// OBS builds its outputs, and so reads the output mode and recordEncoder.json, only when a
+		// profile is loaded. Without this a first run records with the old simple-mode settings.
+		if err := r.reloadProfile(ctx, names); err != nil {
+			problems = append(problems, err.Error())
 		}
 	}
+	// Last, because loading a profile resets the video settings.
+	problems = append(problems, r.applyVideo(ctx)...)
 	return problems, nil
+}
+
+// reloadProfile switches OBS to another profile and back, which makes it rebuild its outputs, then
+// waits for it to finish: a recording started too soon still uses the old outputs.
+func (r *Recorder) reloadProfile(ctx context.Context, names []string) error {
+	c := r.currentClient()
+	for _, other := range names {
+		if other == r.cfg.ProfileName {
+			continue
+		}
+		for _, name := range []string{other, r.cfg.ProfileName} {
+			if err := c.SetCurrentProfile(ctx, name); err != nil {
+				return fmt.Errorf("reloading the %s profile: %w", r.cfg.ProfileName, err)
+			}
+			if err := r.waitForProfile(ctx, name); err != nil {
+				return err
+			}
+		}
+		return nil
+	}
+	return fmt.Errorf("reloading the %s profile: obs has no other profile to switch to, so the new output settings may not apply until OBS restarts", r.cfg.ProfileName)
+}
+
+// waitForProfile waits until OBS reports name as its current profile, then a moment more for it
+// to finish loading and rebuild its outputs.
+func (r *Recorder) waitForProfile(ctx context.Context, name string) error {
+	c := r.currentClient()
+	for attempt := 0; attempt < profileWaitAttempts; attempt++ {
+		_, current, err := c.Profiles(ctx)
+		if err == nil && current == name {
+			return r.cfg.Sleep(ctx, profileSettle)
+		}
+		if err := r.cfg.Sleep(ctx, profileWaitEvery); err != nil {
+			return err
+		}
+	}
+	return fmt.Errorf("obs did not switch to the %s profile", name)
 }
 
 // outputSize is the recorded size for a canvas: 1280x720 for any 16:9 screen, else 720 high at the
@@ -139,6 +188,11 @@ func (r *Recorder) applyVideo(ctx context.Context) []string {
 
 // primaryDisplay is the pixel size of the primary display, the one whose corner is at 0,0.
 func (r *Recorder) primaryDisplay(ctx context.Context) (w, h int, err error) {
+	if r.cfg.DisplaySize != nil {
+		if w, h := r.cfg.DisplaySize(); w > 0 && h > 0 {
+			return w, h, nil // true pixels; OBS reports the display scaled by Windows' zoom
+		}
+	}
 	monitors, err := r.currentClient().Monitors(ctx)
 	if err != nil {
 		return 0, 0, err

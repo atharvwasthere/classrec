@@ -55,9 +55,10 @@ type Config struct {
 	ProfileDir  string // OBS's folder for that profile, where recordEncoder.json lives; "" skips that file
 	Encoder     string // default DefaultEncoder
 
-	Dial       func(ctx context.Context) (OBS, error)
-	OBSRunning func() bool
-	LaunchOBS  func() error
+	Dial        func(ctx context.Context) (OBS, error)
+	OBSRunning  func() bool
+	LaunchOBS   func() error
+	DisplaySize func() (w, h int) // the primary display in true pixels; nil or 0,0 means ask OBS
 
 	SilenceDB       float64       // app audio at or below this is silence; default -55 dBFS
 	AudioFresh      time.Duration // a level older than this is not a level; default 5 s
@@ -396,15 +397,28 @@ func (r *Recorder) startPiece(ctx context.Context) error {
 
 	r.markExistingFilesSeen()
 	client := r.currentClient()
+	started := r.cfg.Now()
 	if err := client.StartRecord(ctx); err != nil {
-		return fmt.Errorf("starting the recording: %w", err)
+		var refused *obs.RequestError
+		if !errors.As(err, &refused) || refused.Code != codeOutputRunning {
+			return fmt.Errorf("starting the recording: %w", err)
+		}
+		// OBS is already recording, e.g. a recording this agent started before it was restarted
+		r.cfg.Log("obs was already recording; carrying on with that recording")
 	}
-	status, err := client.RecordStatus(ctx)
-	if err != nil || !status.Active {
-		return fmt.Errorf("obs says it is not recording after StartRecord (status %+v, error %v)", status, err)
+	// OBS starts its output a moment after it acknowledges StartRecord, so look for a few seconds
+	var status obs.RecordStatus
+	var statusErr error
+	for attempt := 0; attempt < startCheckAttempts; attempt++ {
+		if status, statusErr = client.RecordStatus(ctx); statusErr == nil && status.Active {
+			r.curStart = started
+			return nil
+		}
+		if err := r.cfg.Sleep(ctx, startCheckEvery); err != nil {
+			return err
+		}
 	}
-	r.curStart = r.cfg.Now()
-	return nil
+	return fmt.Errorf("obs says it is not recording after StartRecord (status %+v, error %v)", status, statusErr)
 }
 
 // setRecordDirectory points OBS at staging and checks that it took.

@@ -225,6 +225,56 @@ func TestWindowIsFittedToTheDisplayCanvas(t *testing.T) {
 	}
 }
 
+// OBS reports the display scaled by Windows' zoom (1536x864 for a 1920x1080 screen at 125%), but
+// a captured window is true pixels, so the canvas must come from Windows, not from OBS.
+func TestCanvasUsesTheTrueDisplaySizeWhenWindowsGivesIt(t *testing.T) {
+	h := newHarness(t)
+	h.fake.SetMonitor(1536, 864)
+	h.rec.cfg.DisplaySize = func() (int, int) { return 1920, 1080 }
+	if err := h.rec.Begin(context.Background(), meet); err != nil {
+		t.Fatal(err)
+	}
+	if video := h.fake.Video(); video["baseWidth"] != float64(1920) || video["baseHeight"] != float64(1080) {
+		t.Fatalf("video %v", video)
+	}
+	if item := h.fake.SceneItemTransform("classrec - Meet", "classrec - Meet video"); item["boundsWidth"] != float64(1920) {
+		t.Fatalf("transform %v", item)
+	}
+}
+
+// Loading a profile resets video settings and is what makes OBS read the output mode, so the
+// recorder reloads only when something changed, and sets video after.
+func TestProfileIsReloadedOnlyWhenSomethingChangedAndVideoIsSetAfter(t *testing.T) {
+	h := newHarness(t)
+	ctx := context.Background()
+	lastIndex := func(requests []string, kind string) (last, count int) {
+		last = -1
+		for i, r := range requests {
+			if r == kind {
+				last, count = i, count+1
+			}
+		}
+		return last, count
+	}
+
+	h.rec.Begin(ctx, meet)
+	requests := h.fake.Requests()
+	switches, count := lastIndex(requests, "SetCurrentProfile")
+	video, _ := lastIndex(requests, "SetVideoSettings")
+	if count != 2 || switches > video {
+		t.Fatalf("first class: %d profile switches, last at %d, last video at %d: want a reload, then video", count, switches, video)
+	}
+
+	h.end(ctx)
+	before := len(h.fake.Requests())
+	h.rec.Begin(ctx, meet)
+	for _, r := range h.fake.Requests()[before:] {
+		if r == "SetCurrentProfile" || r == "CreateProfile" {
+			t.Fatalf("second class reloaded the profile although nothing changed (%s)", r)
+		}
+	}
+}
+
 func TestZoomUsesItsOwnScene(t *testing.T) {
 	h := newHarness(t)
 	zoom := Target{App: detect.Zoom, Title: "Zoom Meeting"}
