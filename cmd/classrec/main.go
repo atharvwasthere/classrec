@@ -20,7 +20,7 @@ const usage = `usage: classrec process <video> [flags]
        classrec agent [--debug-detect] [--interval 10s] [--mode record|full] [--root <folder>] [--obs-url ws://localhost:4455]
        classrec install [--root <folder>]   (OBS closed: writes the classrec OBS profile)
        classrec record-test [--app meet|zoom] [--seconds 30]   (records a clip with the real OBS)
-       classrec overlay-demo [--dir <folder for marks.json>] [--status normal|amber|red]
+       classrec overlay-demo [--state green|amber|red|saved] [--dir <folder for marks.json>]
 
   --out <dir>          output directory (default ./out/<video name>)
   --marks <file>       JSON array of seconds; writes marks.md with mark-120s..mark+180s

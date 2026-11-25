@@ -6,6 +6,7 @@ import "golang.org/x/sys/windows"
 var (
 	user32 = windows.NewLazySystemDLL("user32.dll")
 	gdi32  = windows.NewLazySystemDLL("gdi32.dll")
+	dwmapi = windows.NewLazySystemDLL("dwmapi.dll")
 
 	procRegisterClassExW    = user32.NewProc("RegisterClassExW")
 	procCreateWindowExW     = user32.NewProc("CreateWindowExW")
@@ -19,12 +20,12 @@ var (
 	procShowWindow          = user32.NewProc("ShowWindow")
 	procSetWindowPos        = user32.NewProc("SetWindowPos")
 	procGetWindowRect       = user32.NewProc("GetWindowRect")
-	procSetLayeredAttrs     = user32.NewProc("SetLayeredWindowAttributes")
 	procBeginPaint          = user32.NewProc("BeginPaint")
 	procEndPaint            = user32.NewProc("EndPaint")
 	procInvalidateRect      = user32.NewProc("InvalidateRect")
 	procSetCapture          = user32.NewProc("SetCapture")
 	procReleaseCapture      = user32.NewProc("ReleaseCapture")
+	procTrackMouseEvent     = user32.NewProc("TrackMouseEvent")
 	procGetCursorPos        = user32.NewProc("GetCursorPos")
 	procSetTimer            = user32.NewProc("SetTimer")
 	procKillTimer           = user32.NewProc("KillTimer")
@@ -33,26 +34,18 @@ var (
 	procMonitorFromWindow   = user32.NewProc("MonitorFromWindow")
 	procMonitorFromPoint    = user32.NewProc("MonitorFromPoint")
 	procGetMonitorInfoW     = user32.NewProc("GetMonitorInfoW")
-	procGetDC               = user32.NewProc("GetDC")
-	procReleaseDC           = user32.NewProc("ReleaseDC")
-	procFillRect            = user32.NewProc("FillRect")
-	procDrawTextW           = user32.NewProc("DrawTextW")
 	procGetThreadDpiContext = user32.NewProc("GetThreadDpiAwarenessContext")
 	procAreDpiContextsEqual = user32.NewProc("AreDpiAwarenessContextsEqual")
 
-	procCreateFontW         = gdi32.NewProc("CreateFontW")
-	procSelectObject        = gdi32.NewProc("SelectObject")
-	procDeleteObject        = gdi32.NewProc("DeleteObject")
-	procCreateSolidBrush    = gdi32.NewProc("CreateSolidBrush")
-	procCreateRoundRectRgn  = gdi32.NewProc("CreateRoundRectRgn")
-	procCreateEllipticRgn   = gdi32.NewProc("CreateEllipticRgn")
-	procFillRgn             = gdi32.NewProc("FillRgn")
-	procSetTextColor        = gdi32.NewProc("SetTextColor")
-	procSetBkMode           = gdi32.NewProc("SetBkMode")
-	procCreateCompatibleDC  = gdi32.NewProc("CreateCompatibleDC")
-	procCreateCompatibleBmp = gdi32.NewProc("CreateCompatibleBitmap")
-	procBitBlt              = gdi32.NewProc("BitBlt")
-	procDeleteDC            = gdi32.NewProc("DeleteDC")
+	procSelectObject       = gdi32.NewProc("SelectObject")
+	procDeleteObject       = gdi32.NewProc("DeleteObject")
+	procCreateCompatibleDC = gdi32.NewProc("CreateCompatibleDC")
+	procCreateDIBSection   = gdi32.NewProc("CreateDIBSection")
+	procBitBlt             = gdi32.NewProc("BitBlt")
+	procDeleteDC           = gdi32.NewProc("DeleteDC")
+
+	procDwmSetWindowAttr = dwmapi.NewProc("DwmSetWindowAttribute")
+	procDwmExtendFrame   = dwmapi.NewProc("DwmExtendFrameIntoClientArea")
 )
 
 // Window messages.
@@ -60,12 +53,14 @@ const (
 	wmDestroy        = 0x0002
 	wmPaint          = 0x000F
 	wmEraseBkgnd     = 0x0014
+	wmSettingChange  = 0x001A
 	wmMouseActivate  = 0x0021
 	wmTimer          = 0x0113
 	wmMouseMove      = 0x0200
 	wmLButtonDown    = 0x0201
 	wmLButtonUp      = 0x0202
 	wmCaptureChanged = 0x0215
+	wmMouseLeave     = 0x02A3
 	wmDpiChanged     = 0x02E0
 	wmApp            = 0x8000
 )
@@ -85,11 +80,7 @@ const (
 	wsPopup        = 0x80000000
 	wsExTopmost    = 0x00000008
 	wsExToolWindow = 0x00000080
-	wsExLayered    = 0x00080000
 	wsExNoActivate = 0x08000000
-
-	lwaColorKey = 1
-	lwaAlpha    = 2
 
 	swHide           = 0
 	swShowNoActivate = 4
@@ -104,43 +95,29 @@ const (
 	monitorDefaultToNearest = 2
 
 	idcArrow = 32512
+	tmeLeave = 2
+	srcCopy  = 0x00CC0020
 
 	// DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 is the handle value -4.
 	dpiAwarenessPerMonitorV2 = ^uintptr(3)
-)
 
-// Text and drawing flags.
-const (
-	dtCenter     = 0x0001
-	dtVCenter    = 0x0004
-	dtWordBreak  = 0x0010
-	dtSingleLine = 0x0020
-	dtCalcRect   = 0x0400
-	dtNoPrefix   = 0x0800
-
-	bkModeTransparent = 1
-	srcCopy           = 0x00CC0020
-
-	fontWeightSemibold = 600
-	fontWeightBold     = 700
-	defaultCharset     = 1
-	clearTypeQuality   = 5
+	// DWM window attributes (Windows 11; older Windows refuses them and the card stays plain).
+	dwmwaUseImmersiveDarkMode = 20
+	dwmwaCornerPreference     = 33
+	dwmwaSystemBackdropType   = 38
+	dwmwcpRound               = 2
+	dwmsbtTransientWindow     = 3 // acrylic
 )
 
 type rect struct {
-	Left   int32
-	Top    int32
-	Right  int32
-	Bottom int32
+	Left, Top, Right, Bottom int32
 }
 
 func (r rect) width() int32  { return r.Right - r.Left }
 func (r rect) height() int32 { return r.Bottom - r.Top }
 
 func (r rect) contains(p point) bool {
-	insideX := p.X >= r.Left && p.X < r.Right
-	insideY := p.Y >= r.Top && p.Y < r.Bottom
-	return insideX && insideY
+	return p.X >= r.Left && p.X < r.Right && p.Y >= r.Top && p.Y < r.Bottom
 }
 
 // WNDCLASSEXW
@@ -188,9 +165,15 @@ type monitorInfo struct {
 	Flags    uint32
 }
 
+// TRACKMOUSEEVENT
+type trackMouseEvent struct {
+	Size      uint32
+	Flags     uint32
+	Window    uintptr
+	HoverTime uint32
+}
+
 // pointFromLParam unpacks the signed client coordinates of a mouse message.
 func pointFromLParam(lParam uintptr) point {
-	x := int16(lParam & 0xFFFF)
-	y := int16((lParam >> 16) & 0xFFFF)
-	return point{X: int32(x), Y: int32(y)}
+	return point{X: int32(int16(lParam & 0xFFFF)), Y: int32(int16((lParam >> 16) & 0xFFFF))}
 }

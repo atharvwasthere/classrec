@@ -12,24 +12,46 @@ import (
 	"classrec/internal/overlay"
 )
 
-// runOverlayDemo shows the overlay as if a class were recording, so its look, dragging and focus behaviour can be checked.
+// demoStates are the overlay's looks, as overlay-demo names them.
+var demoStates = []struct {
+	name  string
+	level overlay.Level
+	text  string
+	saved bool
+}{
+	{"green", overlay.Normal, "", false},
+	{"amber", overlay.Amber, chargerText, false},
+	{"red", overlay.Red, notHearing, false},
+	{"saved", overlay.Normal, "", true},
+}
+
+// runOverlayDemo writes a PNG of every state, in both themes, next to classrec, then shows the
+// live overlay in one state so its look, dragging and focus behaviour can be checked.
 func runOverlayDemo(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("overlay-demo", flag.ContinueOnError)
 	dir := fs.String("dir", filepath.Join(exeDir(), "overlay-demo"), "")
-	status := fs.String("status", "normal", "")
+	state := fs.String("state", "green", "")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	level, text := overlay.Normal, ""
-	switch *status {
-	case "normal":
-	case "amber":
-		level, text = overlay.Amber, "Plug in charger"
-	case "red":
-		level, text = overlay.Red, "Not hearing the class - call Adi"
-	default:
-		return fmt.Errorf("--status must be normal, amber or red, not %q", *status)
+	var level overlay.Level
+	var text string
+	found := false
+	for _, s := range demoStates {
+		for _, theme := range []string{"dark", "light"} {
+			png := filepath.Join(exeDir(), fmt.Sprintf("overlay-%s-%s.png", s.name, theme))
+			if err := overlay.RenderPNG(png, s.level, s.text, s.saved, theme == "dark", 1.5); err != nil {
+				return err
+			}
+		}
+		if s.name == *state {
+			level, text, found = s.level, s.text, true
+		}
 	}
+	if !found {
+		return fmt.Errorf("--state must be green, amber, red or saved, not %q", *state)
+	}
+	fmt.Fprintf(os.Stderr, "wrote %s\n", filepath.Join(exeDir(), "overlay-*.png"))
 
 	marksPath := filepath.Join(*dir, "marks.json")
 	o, err := overlay.New(overlay.Config{
