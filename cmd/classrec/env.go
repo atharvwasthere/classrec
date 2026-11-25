@@ -8,17 +8,20 @@ import (
 	"strings"
 )
 
-// defaultEnvFile is the key file next to the classrec binary, wherever classrec is run from.
-func defaultEnvFile() string {
+// exeDir is the folder holding the classrec binary, wherever classrec is run from; "." if unknown.
+func exeDir() string {
 	exe, err := os.Executable()
 	if err != nil {
-		return ".env"
+		return "."
 	}
 	if real, err := filepath.EvalSymlinks(exe); err == nil {
 		exe = real
 	}
-	return filepath.Join(filepath.Dir(exe), ".env")
+	return filepath.Dir(exe)
 }
+
+// defaultEnvFile is the key file next to the classrec binary.
+func defaultEnvFile() string { return filepath.Join(exeDir(), ".env") }
 
 // loadAPIKey returns SARVAM_API_KEY from the environment, else from the env file.
 // The value is returned to the caller only; it is never printed or logged.

@@ -17,6 +17,7 @@ import (
 )
 
 const usage = `usage: classrec process <video> [flags]
+       classrec agent --debug-detect [--interval 10s]
 
   --out <dir>          output directory (default ./out/<video name>)
   --marks <file>       JSON array of seconds; writes marks.md with mark-120s..mark+180s
@@ -36,10 +37,21 @@ func main() {
 }
 
 func run(args []string) error {
-	if len(args) == 0 || args[0] != "process" {
-		fmt.Fprint(os.Stderr, usage)
-		return errors.New("expected the process command")
+	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
+	defer stop()
+	if len(args) > 0 {
+		switch args[0] {
+		case "process":
+			return runProcess(ctx, args)
+		case "agent":
+			return runAgent(ctx, args[1:])
+		}
 	}
+	fmt.Fprint(os.Stderr, usage)
+	return errors.New("expected a command")
+}
+
+func runProcess(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("process", flag.ContinueOnError)
 	out := fs.String("out", "", "")
 	marks := fs.String("marks", "", "")
@@ -92,8 +104,6 @@ func run(args []string) error {
 		return err
 	}
 
-	ctx, stop := signal.NotifyContext(context.Background(), os.Interrupt, syscall.SIGTERM)
-	defer stop()
 	if err := p.Run(ctx); err != nil {
 		return err
 	}
