@@ -18,6 +18,7 @@ import (
 
 const usage = `usage: classrec process <video> [flags]
        classrec agent --debug-detect [--interval 10s]
+       classrec overlay-demo [--dir <folder for marks.json>] [--status normal|amber|red]
 
   --out <dir>          output directory (default ./out/<video name>)
   --marks <file>       JSON array of seconds; writes marks.md with mark-120s..mark+180s
@@ -28,6 +29,8 @@ const usage = `usage: classrec process <video> [flags]
   --date YYYY-MM-DD    recording date; only needed when the file name is not a Zoom name and the video has no creation date
   --env <file>         file holding SARVAM_API_KEY (default: the one next to classrec)
 `
+
+//go:generate go run ../../tools/winres classrec.manifest rsrc_windows_amd64.syso
 
 func main() {
 	if err := run(os.Args[1:]); err != nil {
@@ -45,6 +48,8 @@ func run(args []string) error {
 			return runProcess(ctx, args)
 		case "agent":
 			return runAgent(ctx, args[1:])
+		case "overlay-demo":
+			return runOverlayDemo(ctx, args[1:])
 		}
 	}
 	fmt.Fprint(os.Stderr, usage)
