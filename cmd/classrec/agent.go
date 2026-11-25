@@ -3,7 +3,6 @@ package main
 import (
 	"context"
 	"encoding/json"
-	"errors"
 	"flag"
 	"fmt"
 	"os"
@@ -27,6 +26,8 @@ func runAgent(ctx context.Context, args []string) error {
 	debug := fs.Bool("debug-detect", false, "")
 	interval := fs.Duration("interval", 10*time.Second, "")
 	modeFlag := fs.String("mode", "", "")
+	root := fs.String("root", defaultRoot, "")
+	obsURL := fs.String("obs-url", "ws://localhost:4455", "")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
@@ -36,7 +37,7 @@ func runAgent(ctx context.Context, args []string) error {
 	}
 	fmt.Fprintf(os.Stderr, "mode: %s (%s)\n", mode.Mode, mode.Source)
 	if !*debug {
-		return errors.New("only agent --debug-detect is implemented so far")
+		return runRecordLoop(ctx, recordOptions{Mode: mode, Interval: *interval, Root: *root, OBSURL: *obsURL})
 	}
 
 	dir := filepath.Join(exeDir(), "logs")
