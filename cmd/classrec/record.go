@@ -41,7 +41,7 @@ type agent struct {
 func runRecordLoop(ctx context.Context, opts recordOptions) error {
 	// Keep-awake is a per-thread setting in Windows, so this loop keeps one thread.
 	runtime.LockOSThread()
-	if err := desktop.SingleInstance("classrec-agent"); err != nil {
+	if err := desktop.SingleInstance("classrec-agent", 30*time.Second); err != nil {
 		return err
 	}
 	log, err := openAgentLog()

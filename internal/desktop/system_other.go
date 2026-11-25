@@ -2,6 +2,8 @@
 
 package desktop
 
+import "time"
+
 // OnBattery is unknown outside Windows.
 func OnBattery() bool { return false }
 
@@ -12,4 +14,7 @@ func KeepAwake(bool) bool { return false }
 func FreeBytes(string) (uint64, error) { return 0, nil }
 
 // SingleInstance does nothing outside Windows.
-func SingleInstance(string) error { return nil }
+func SingleInstance(string, time.Duration) error { return nil }
+
+// HideConsole does nothing outside Windows.
+func HideConsole() {}

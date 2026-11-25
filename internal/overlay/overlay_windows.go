@@ -402,6 +402,13 @@ func cursorPosition() point {
 	return p
 }
 
+// ButtonCenter is the middle of the "I didn't get this" button on screen, for the selftest's click.
+func (o *Overlay) ButtonCenter() (x, y int32) {
+	at := o.windowPosition()
+	r := buttonArea
+	return at.X + o.px((r.Left+r.Right)/2), at.Y + o.px((r.Top+r.Bottom)/2)
+}
+
 // DPIAwareness reports whether the process runs per-monitor v2, i.e. whether the embedded manifest took effect.
 func DPIAwareness() bool {
 	context, _, _ := procGetThreadDpiContext.Call()

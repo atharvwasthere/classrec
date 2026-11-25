@@ -27,5 +27,8 @@ func RenderPNG(string, Level, string, bool, bool, float32) error {
 	return errors.New("the overlay needs Windows")
 }
 
+// ButtonCenter is nowhere outside Windows.
+func (*Overlay) ButtonCenter() (x, y int32) { return 0, 0 }
+
 // DPIAwareness is false outside Windows.
 func DPIAwareness() bool { return false }

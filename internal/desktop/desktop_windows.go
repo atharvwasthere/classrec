@@ -46,6 +46,17 @@ func PrimaryDisplay() (width, height int) {
 	return int(w), int(h)
 }
 
+// MicReadable checks that Windows' record of which apps use the mic can be read; detection needs it.
+func MicReadable() error {
+	key, err := registry.OpenKey(registry.CURRENT_USER, micKey, registry.ENUMERATE_SUB_KEYS)
+	if err != nil {
+		return err
+	}
+	defer key.Close()
+	_, err = key.ReadSubKeyNames(-1)
+	return err
+}
+
 // Snapshot observes all titled top-level windows and the mic entries of interest.
 func Snapshot(now time.Time) detect.Sample {
 	return detect.Sample{

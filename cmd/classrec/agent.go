@@ -28,8 +28,12 @@ func runAgent(ctx context.Context, args []string) error {
 	modeFlag := fs.String("mode", "", "")
 	root := fs.String("root", defaultRoot, "")
 	obsURL := fs.String("obs-url", "ws://localhost:4455", "")
+	background := fs.Bool("background", false, "") // started by the scheduled task: no console window
 	if err := fs.Parse(args); err != nil {
 		return err
+	}
+	if *background {
+		desktop.HideConsole()
 	}
 	mode, err := agentMode(*modeFlag, settingsPath())
 	if err != nil {

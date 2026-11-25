@@ -2,6 +2,7 @@ package desktop
 
 import (
 	"errors"
+	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -48,15 +49,24 @@ func FreeBytes(path string) (uint64, error) {
 }
 
 // SingleInstance claims name for this process, so a second agent exits instead of fighting the
-// first over OBS. The claim lasts until the process ends.
-func SingleInstance(name string) error {
+// first over OBS. It waits up to wait for an agent that is exiting, as after a self-update. The
+// claim lasts until the process ends.
+func SingleInstance(name string, wait time.Duration) error {
 	n, err := windows.UTF16PtrFromString(`Local\` + name)
 	if err != nil {
 		return err
 	}
-	_, err = windows.CreateMutex(nil, false, n)
-	if errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
-		return errors.New("another classrec agent is already running")
+	for deadline := time.Now().Add(wait); ; time.Sleep(time.Second) {
+		handle, err := windows.CreateMutex(nil, false, n)
+		if !errors.Is(err, windows.ERROR_ALREADY_EXISTS) {
+			return err
+		}
+		windows.CloseHandle(handle)
+		if time.Now().After(deadline) {
+			return errors.New("another classrec agent is already running")
+		}
 	}
-	return err
 }
+
+// HideConsole detaches from the console window, so an agent started at logon runs out of sight.
+func HideConsole() { kernel32.NewProc("FreeConsole").Call() }

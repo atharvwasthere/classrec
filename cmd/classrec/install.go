@@ -8,6 +8,7 @@ import (
 	"math"
 	"os"
 	"path/filepath"
+	"strings"
 
 	"classrec/internal/desktop"
 	"classrec/internal/obs"
@@ -15,8 +16,9 @@ import (
 )
 
 // runInstall writes the classrec OBS profile. OBS must be closed: it lists profiles when it starts
-// and rewrites the current profile's files when it exits.
-func runInstall(_ context.Context, args []string) error {
+// and rewrites the current profile's files when it exits. Run from C:\classrec it also registers
+// the agent to start at logon and runs the selftest; a dev build anywhere else only gets the profile.
+func runInstall(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("install", flag.ContinueOnError)
 	root := fs.String("root", defaultRoot, "")
 	if err := fs.Parse(args); err != nil {
@@ -40,7 +42,20 @@ func runInstall(_ context.Context, args []string) error {
 	}
 	fmt.Fprintf(os.Stderr, "obs profile %q written to %s (canvas %dx%d, recording %dx%d at %d fps)\n",
 		recorder.ProfileName, dir, w, h, outW, outH, recorder.FPS)
-	return nil
+
+	exe, err := os.Executable()
+	if err != nil {
+		return err
+	}
+	if !strings.EqualFold(filepath.Dir(exe), installDir) {
+		fmt.Fprintf(os.Stderr, "not registering the agent: this classrec is in %s, not %s\n", filepath.Dir(exe), installDir)
+		return nil
+	}
+	if err := registerTask(ctx, exe); err != nil {
+		return err
+	}
+	fmt.Fprintf(os.Stderr, "agent registered to start at logon as %s\n", currentUser())
+	return runSelftest(ctx, nil)
 }
 
 // outputSize is the recorded size for a canvas: 1280x720 for any 16:9 screen, else 720 high at the

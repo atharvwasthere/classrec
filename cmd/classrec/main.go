@@ -19,7 +19,9 @@ import (
 const usage = `usage: classrec process <video or class folder> [flags]
        classrec calibrate <recording.mkv>...   (sets the silence threshold from real classes)
        classrec agent [--debug-detect] [--interval 10s] [--mode record|full] [--root <folder>] [--obs-url ws://localhost:4455]
-       classrec install [--root <folder>]   (OBS closed: writes the classrec OBS profile)
+       classrec install [--root <folder>]   (OBS closed: writes the OBS profile; from C:\classrec also starts the agent at logon)
+       classrec uninstall                   (stops starting the agent at logon)
+       classrec selftest                    (checks everything; writes logs\selftest-<time>.txt)
        classrec record-test [--app meet|zoom] [--seconds 30]   (records a clip with the real OBS)
        classrec overlay-demo [--state green|amber|red|saved] [--dir <folder for marks.json>]
 
@@ -53,6 +55,10 @@ func run(args []string) error {
 			return runAgent(ctx, args[1:])
 		case "calibrate":
 			return runCalibrate(ctx, args[1:])
+		case "uninstall":
+			return runUninstall(ctx, args[1:])
+		case "selftest":
+			return runSelftest(ctx, args[1:])
 		case "install":
 			return runInstall(ctx, args[1:])
 		case "record-test":
