@@ -8,8 +8,9 @@ import (
 
 func TestAgentMode(t *testing.T) {
 	tests := []struct {
-		name, file, flag, want string
-		wantErr                bool
+		name, file, flag string
+		want             Mode
+		wantErr          bool
 	}{
 		{"no file", "", "", modeRecord, false},
 		{"full in file", `{"mode": "full"}`, "", modeFull, false},
@@ -27,9 +28,9 @@ func TestAgentMode(t *testing.T) {
 		if tt.file != "" {
 			os.WriteFile(path, []byte(tt.file), 0o644)
 		}
-		got, source, err := agentMode(tt.flag, path)
-		if (err != nil) != tt.wantErr || got != tt.want {
-			t.Errorf("%s: got %q (%s), err %v; want %q", tt.name, got, source, err, tt.want)
+		got, err := agentMode(tt.flag, path)
+		if (err != nil) != tt.wantErr || got.Mode != tt.want {
+			t.Errorf("%s: got %q (%s), err %v; want %q", tt.name, got.Mode, got.Source, err, tt.want)
 		}
 	}
 }

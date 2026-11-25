@@ -9,168 +9,44 @@ import (
 	"golang.org/x/sys/windows"
 )
 
-var (
-	user32                  = windows.NewLazySystemDLL("user32.dll")
-	gdi32                   = windows.NewLazySystemDLL("gdi32.dll")
-	procRegisterClassExW    = user32.NewProc("RegisterClassExW")
-	procCreateWindowExW     = user32.NewProc("CreateWindowExW")
-	procDefWindowProcW      = user32.NewProc("DefWindowProcW")
-	procDestroyWindow       = user32.NewProc("DestroyWindow")
-	procGetMessageW         = user32.NewProc("GetMessageW")
-	procTranslateMessage    = user32.NewProc("TranslateMessage")
-	procDispatchMessageW    = user32.NewProc("DispatchMessageW")
-	procPostMessageW        = user32.NewProc("PostMessageW")
-	procPostQuitMessage     = user32.NewProc("PostQuitMessage")
-	procShowWindow          = user32.NewProc("ShowWindow")
-	procSetWindowPos        = user32.NewProc("SetWindowPos")
-	procGetWindowRect       = user32.NewProc("GetWindowRect")
-	procSetLayeredAttrs     = user32.NewProc("SetLayeredWindowAttributes")
-	procBeginPaint          = user32.NewProc("BeginPaint")
-	procEndPaint            = user32.NewProc("EndPaint")
-	procInvalidateRect      = user32.NewProc("InvalidateRect")
-	procSetCapture          = user32.NewProc("SetCapture")
-	procReleaseCapture      = user32.NewProc("ReleaseCapture")
-	procGetCursorPos        = user32.NewProc("GetCursorPos")
-	procSetTimer            = user32.NewProc("SetTimer")
-	procKillTimer           = user32.NewProc("KillTimer")
-	procLoadCursorW         = user32.NewProc("LoadCursorW")
-	procGetDpiForWindow     = user32.NewProc("GetDpiForWindow")
-	procMonitorFromWindow   = user32.NewProc("MonitorFromWindow")
-	procMonitorFromPoint    = user32.NewProc("MonitorFromPoint")
-	procGetMonitorInfoW     = user32.NewProc("GetMonitorInfoW")
-	procGetDC               = user32.NewProc("GetDC")
-	procReleaseDC           = user32.NewProc("ReleaseDC")
-	procFillRect            = user32.NewProc("FillRect")
-	procDrawTextW           = user32.NewProc("DrawTextW")
-	procGetThreadDpiContext = user32.NewProc("GetThreadDpiAwarenessContext")
-	procAreDpiContextsEqual = user32.NewProc("AreDpiAwarenessContextsEqual")
-	procCreateFontW         = gdi32.NewProc("CreateFontW")
-	procSelectObject        = gdi32.NewProc("SelectObject")
-	procDeleteObject        = gdi32.NewProc("DeleteObject")
-	procCreateSolidBrush    = gdi32.NewProc("CreateSolidBrush")
-	procCreateRoundRectRgn  = gdi32.NewProc("CreateRoundRectRgn")
-	procCreateEllipticRgn   = gdi32.NewProc("CreateEllipticRgn")
-	procFillRgn             = gdi32.NewProc("FillRgn")
-	procSetTextColor        = gdi32.NewProc("SetTextColor")
-	procSetBkMode           = gdi32.NewProc("SetBkMode")
-	procCreateCompatibleDC  = gdi32.NewProc("CreateCompatibleDC")
-	procCreateCompatibleBmp = gdi32.NewProc("CreateCompatibleBitmap")
-	procBitBlt              = gdi32.NewProc("BitBlt")
-	procDeleteDC            = gdi32.NewProc("DeleteDC")
-)
-
 const (
-	wmDestroy         = 0x0002
-	wmPaint           = 0x000F
-	wmEraseBkgnd      = 0x0014
-	wmMouseActivate   = 0x0021
-	wmTimer           = 0x0113
-	wmMouseMove       = 0x0200
-	wmLButtonDown     = 0x0201
-	wmLButtonUp       = 0x0202
-	wmCaptureChanged  = 0x0215
-	wmDpiChanged      = 0x02E0
-	wmAppShow         = 0x8000 + 1
-	wmAppHide         = 0x8000 + 2
-	wmAppRefresh      = 0x8000 + 3
-	wmAppClose        = 0x8000 + 4
-	maNoActivate      = 3
-	wsPopup           = 0x80000000
-	wsExTopmost       = 0x00000008
-	wsExToolWindow    = 0x00000080
-	wsExLayered       = 0x00080000
-	wsExNoActivate    = 0x08000000
-	lwaColorKey       = 1
-	lwaAlpha          = 2
-	swHide            = 0
-	swShowNoActivate  = 4
-	swpNoSize         = 0x0001
-	swpNoMove         = 0x0002
-	swpNoZOrder       = 0x0004
-	swpNoActivate     = 0x0010
-	dtCenter          = 0x0001
-	dtVCenter         = 0x0004
-	dtWordBreak       = 0x0010
-	dtSingleLine      = 0x0020
-	dtCalcRect        = 0x0400
-	dtNoPrefix        = 0x0800
-	monitorDefaultNul = 0
-	monitorDefaultNea = 2
-	idcArrow          = 32512
-	srcCopy           = 0x00CC0020
-	flashTimer        = 1
-	flashMillis       = 2000
-	dpiPerMonitorV2   = ^uintptr(3) // DPI_AWARENESS_CONTEXT_PER_MONITOR_AWARE_V2 == (HANDLE)-4
+	windowClassName = "classrec.overlay"
+	normalPillText  = "Recording class"
+
+	flashTimerID  = 1
+	flashMillis   = 2000
+	flashSaved    = "Saved ✓"
+	flashNotSaved = "Not saved"
 )
 
-// Colors are COLORREF, 0x00BBGGRR. Key is painted where the window should be see-through and click-through.
-const (
-	colKey      = 0x00FF00FF
-	colPill     = 0x00242120
-	colDot      = 0x003539E5
-	colAmber    = 0x0000B3FF
-	colRed      = 0x002828C6
-	colButton   = 0x00C06515
-	colPressed  = 0x00A1470D
-	colSaved    = 0x00327D2E
-	colWhite    = 0x00FFFFFF
-	colInk      = 0x001A1A1A
-	windowAlpha = 240
-)
+// buttonFlash is the short-lived message on the button after a click.
+type buttonFlash struct {
+	Text  string // "" when no flash is showing
+	Saved bool
+}
 
-// Overlay is a running overlay window. Its methods are safe from any goroutine.
+// Overlay is a running overlay window. Its exported methods are safe from any goroutine;
+// everything else runs on the overlay's own UI thread.
 type Overlay struct {
 	cfg  Config
 	hwnd uintptr
 	done chan struct{}
 
-	mu    sync.Mutex
-	level Level
-	text  string
+	statusMu sync.Mutex
+	level    Level
+	text     string
 
 	// UI-thread state
-	dpi                 uint32
-	pillFont, btnFont   uintptr
-	pill, button        rect
-	pressed, dragging   bool
-	dragCursor, dragWin point
-	flash               string // "" or the text shown on the button for 2 s
-	flashOK             bool
-}
-
-type rect struct{ Left, Top, Right, Bottom int32 }
-
-type wndClassEx struct {
-	Size, Style                      uint32
-	WndProc                          uintptr
-	ClsExtra, WndExtra               int32
-	Instance, Icon, Cursor, Bg, Menu uintptr
-	ClassName                        *uint16
-	IconSm                           uintptr
-}
-
-type msg struct {
-	Hwnd           uintptr
-	Message        uint32
-	WParam, LParam uintptr
-	Time           uint32
-	Pt             point
-	Private        uint32
-}
-
-type paintStruct struct {
-	Hdc                uintptr
-	Erase              int32
-	Paint              rect
-	Restore, IncUpdate int32
-	Reserved           [32]byte
-}
-
-type monitorInfo struct {
-	Size    uint32
-	Monitor rect
-	Work    rect
-	Flags   uint32
+	dpi            uint32
+	pillFont       uintptr
+	buttonFont     uintptr
+	pill           rect
+	button         rect
+	buttonPressed  bool
+	dragging       bool
+	dragStartMouse point
+	dragStartPos   point
+	flash          buttonFlash
 }
 
 // current is the one overlay; a window procedure has no closure to find its Go object.
@@ -181,11 +57,16 @@ func New(cfg Config) (*Overlay, error) {
 	if current != nil {
 		return nil, errors.New("overlay already running")
 	}
-	o := &Overlay{cfg: cfg, done: make(chan struct{}), text: "Recording class"}
+	o := &Overlay{
+		cfg:  cfg,
+		done: make(chan struct{}),
+		text: normalPillText,
+	}
 	current = o
-	ready := make(chan error, 1)
-	go o.loop(ready)
-	if err := <-ready; err != nil {
+
+	created := make(chan error, 1)
+	go o.runUIThread(created)
+	if err := <-created; err != nil {
 		current = nil
 		return nil, err
 	}
@@ -199,13 +80,14 @@ func (o *Overlay) Show() { o.post(wmAppShow) }
 func (o *Overlay) Hide() { o.post(wmAppHide) }
 
 // SetStatus changes the pill; Normal ignores text and shows "Recording class".
-func (o *Overlay) SetStatus(l Level, text string) {
-	o.mu.Lock()
-	o.level, o.text = l, text
-	if l == Normal {
-		o.text = "Recording class"
+func (o *Overlay) SetStatus(level Level, text string) {
+	if level == Normal {
+		text = normalPillText
 	}
-	o.mu.Unlock()
+	o.statusMu.Lock()
+	o.level = level
+	o.text = text
+	o.statusMu.Unlock()
 	o.post(wmAppRefresh)
 }
 
@@ -216,42 +98,73 @@ func (o *Overlay) Close() {
 	current = nil
 }
 
-func (o *Overlay) post(m uintptr) { procPostMessageW.Call(o.hwnd, m, 0, 0) }
+func (o *Overlay) post(message uintptr) {
+	procPostMessageW.Call(o.hwnd, message, 0, 0)
+}
 
-func (o *Overlay) loop(ready chan<- error) {
+func (o *Overlay) status() (Level, string) {
+	o.statusMu.Lock()
+	defer o.statusMu.Unlock()
+	return o.level, o.text
+}
+
+// runUIThread creates the window and runs its message loop. A window belongs to the OS thread
+// that created it, so this goroutine stays locked to its thread for its whole life.
+func (o *Overlay) runUIThread(created chan<- error) {
 	runtime.LockOSThread()
 	defer close(o.done)
 
-	var inst windows.Handle
-	windows.GetModuleHandleEx(0, nil, &inst)
-	class, _ := windows.UTF16PtrFromString("classrec.overlay")
-	cursor, _, _ := procLoadCursorW.Call(0, idcArrow)
-	wc := wndClassEx{WndProc: windows.NewCallback(wndProc), Instance: uintptr(inst), Cursor: cursor, ClassName: class}
-	wc.Size = uint32(unsafe.Sizeof(wc))
-	if r, _, err := procRegisterClassExW.Call(uintptr(unsafe.Pointer(&wc))); r == 0 {
-		ready <- err
+	if err := o.createWindow(); err != nil {
+		created <- err
 		return
 	}
-	pos, saved := loadPosition(o.cfg.SettingsPath)
-	hwnd, _, err := procCreateWindowExW.Call(wsExLayered|wsExTopmost|wsExToolWindow|wsExNoActivate,
-		uintptr(unsafe.Pointer(class)), 0, wsPopup, uintptr(pos.X), uintptr(pos.Y), 1, 1, 0, 0, uintptr(inst), 0)
+	created <- nil
+	runMessageLoop()
+}
+
+func (o *Overlay) createWindow() error {
+	var instance windows.Handle
+	windows.GetModuleHandleEx(0, nil, &instance)
+	className, _ := windows.UTF16PtrFromString(windowClassName)
+	arrowCursor, _, _ := procLoadCursorW.Call(0, idcArrow)
+
+	class := wndClassEx{
+		WndProc:   windows.NewCallback(wndProc),
+		Instance:  uintptr(instance),
+		Cursor:    arrowCursor,
+		ClassName: className,
+	}
+	class.Size = uint32(unsafe.Sizeof(class))
+	registered, _, err := procRegisterClassExW.Call(uintptr(unsafe.Pointer(&class)))
+	if registered == 0 {
+		return err
+	}
+
+	savedPos, hasSavedPos := loadPosition(o.cfg.SettingsPath)
+	exStyle := uintptr(wsExLayered | wsExTopmost | wsExToolWindow | wsExNoActivate)
+	hwnd, _, err := procCreateWindowExW.Call(exStyle, uintptr(unsafe.Pointer(className)), 0, wsPopup,
+		uintptr(savedPos.X), uintptr(savedPos.Y), 1, 1, 0, 0, uintptr(instance), 0)
 	if hwnd == 0 {
-		ready <- err
-		return
+		return err
 	}
 	o.hwnd = hwnd
-	procSetLayeredAttrs.Call(hwnd, colKey, windowAlpha, lwaColorKey|lwaAlpha)
+
+	// Pixels painted colorKey are see-through and let clicks pass to the window below.
+	procSetLayeredAttrs.Call(hwnd, colorKey, windowAlpha, lwaColorKey|lwaAlpha)
 	dpi, _, _ := procGetDpiForWindow.Call(hwnd)
 	o.setDPI(uint32(dpi))
-	if !saved || !onScreen(pos) {
-		o.moveToDefault()
+	if !hasSavedPos || !isOnAnyMonitor(savedPos) {
+		o.moveToDefaultPosition()
 	}
-	ready <- nil
+	return nil
+}
 
+func runMessageLoop() {
 	var m msg
 	for {
-		r, _, _ := procGetMessageW.Call(uintptr(unsafe.Pointer(&m)), 0, 0, 0)
-		if int32(r) <= 0 {
+		result, _, _ := procGetMessageW.Call(uintptr(unsafe.Pointer(&m)), 0, 0, 0)
+		quitOrError := int32(result) <= 0
+		if quitOrError {
 			return
 		}
 		procTranslateMessage.Call(uintptr(unsafe.Pointer(&m)))
@@ -259,278 +172,180 @@ func (o *Overlay) loop(ready chan<- error) {
 	}
 }
 
+// wndProc routes each window message to its handler.
 func wndProc(hwnd, message, wParam, lParam uintptr) uintptr {
 	o := current
-	if o == nil || o.hwnd != hwnd {
-		r, _, _ := procDefWindowProcW.Call(hwnd, message, wParam, lParam)
-		return r
+	isOurWindow := o != nil && o.hwnd == hwnd // false while CreateWindowEx is still running
+	if !isOurWindow {
+		return defaultWindowProc(hwnd, message, wParam, lParam)
 	}
+
 	switch message {
 	case wmMouseActivate:
+		// The heart of the overlay: a click never takes focus from Zoom or Edge.
 		return maNoActivate
 	case wmEraseBkgnd:
-		return 1
+		const backgroundHandledByPaint = 1
+		return backgroundHandledByPaint
 	case wmPaint:
 		o.paint()
-		return 0
 	case wmLButtonDown:
-		p := point{int32(int16(lParam)), int32(int16(lParam >> 16))}
-		if o.button.contains(p) {
-			o.pressed = true
-			o.invalidate()
-		} else {
-			o.dragging = true
-			procGetCursorPos.Call(uintptr(unsafe.Pointer(&o.dragCursor)))
-			o.dragWin = o.windowPos()
-		}
-		procSetCapture.Call(hwnd)
-		return 0
+		o.onLeftButtonDown(pointFromLParam(lParam))
 	case wmMouseMove:
-		if o.dragging {
-			var c point
-			procGetCursorPos.Call(uintptr(unsafe.Pointer(&c)))
-			x, y := o.dragWin.X+c.X-o.dragCursor.X, o.dragWin.Y+c.Y-o.dragCursor.Y
-			procSetWindowPos.Call(hwnd, 0, uintptr(x), uintptr(y), 0, 0, swpNoSize|swpNoZOrder|swpNoActivate)
-		}
-		return 0
+		o.onMouseMove()
 	case wmLButtonUp:
-		p := point{int32(int16(lParam)), int32(int16(lParam >> 16))}
-		wasPressed, wasDragging := o.pressed, o.dragging
-		procReleaseCapture.Call() // sends WM_CAPTURECHANGED, which clears both flags
-		if wasPressed && o.button.contains(p) {
-			o.mark()
-		}
-		if wasDragging {
-			savePosition(o.cfg.SettingsPath, o.windowPos())
-		}
-		return 0
+		o.onLeftButtonUp(pointFromLParam(lParam))
 	case wmCaptureChanged:
-		if o.pressed {
-			o.invalidate()
-		}
-		o.pressed, o.dragging = false, false
-		return 0
+		o.onCaptureLost()
 	case wmTimer:
-		if wParam == flashTimer {
-			procKillTimer.Call(hwnd, flashTimer)
-			o.flash = ""
-			o.invalidate()
-		}
-		return 0
+		o.onTimer(wParam)
 	case wmDpiChanged:
-		// Keep the top-left where it is; layout recomputes the size, so the suggested rect isn't needed.
-		o.setDPI(uint32(wParam & 0xFFFF))
-		return 0
+		newDPI := uint32(wParam & 0xFFFF)
+		o.setDPI(newDPI)
 	case wmAppShow:
-		procSetWindowPos.Call(hwnd, ^uintptr(0), 0, 0, 0, 0, swpNoMove|swpNoSize|swpNoActivate) // HWND_TOPMOST
-		procShowWindow.Call(hwnd, swShowNoActivate)
-		return 0
+		o.showWithoutActivating()
 	case wmAppHide:
 		procShowWindow.Call(hwnd, swHide)
-		return 0
 	case wmAppRefresh:
 		o.layout()
-		return 0
 	case wmAppClose:
 		procDestroyWindow.Call(hwnd)
-		return 0
 	case wmDestroy:
-		procDeleteObject.Call(o.pillFont)
-		procDeleteObject.Call(o.btnFont)
-		procPostQuitMessage.Call(0)
-		return 0
+		o.onDestroy()
+	default:
+		return defaultWindowProc(hwnd, message, wParam, lParam)
 	}
-	r, _, _ := procDefWindowProcW.Call(hwnd, message, wParam, lParam)
-	return r
+	return 0
 }
 
-func (o *Overlay) mark() {
-	o.flash, o.flashOK = "Saved ✓", true
-	if o.cfg.OnMark != nil {
-		if err := o.cfg.OnMark(); err != nil {
-			o.flash, o.flashOK = "Not saved", false
-		}
+func defaultWindowProc(hwnd, message, wParam, lParam uintptr) uintptr {
+	result, _, _ := procDefWindowProcW.Call(hwnd, message, wParam, lParam)
+	return result
+}
+
+// onLeftButtonDown presses the button, or starts dragging the overlay when the press is on the pill.
+func (o *Overlay) onLeftButtonDown(p point) {
+	if o.button.contains(p) {
+		o.buttonPressed = true
+		o.invalidate()
+	} else {
+		o.dragging = true
+		o.dragStartMouse = cursorPosition()
+		o.dragStartPos = o.windowPosition()
 	}
-	procSetTimer.Call(o.hwnd, flashTimer, flashMillis, 0)
-	o.invalidate()
+	procSetCapture.Call(o.hwnd)
 }
 
-// px converts device-independent pixels to physical pixels at the window's DPI.
-func (o *Overlay) px(dip int32) int32 { return dip * int32(o.dpi) / 96 }
-
-func (o *Overlay) setDPI(dpi uint32) {
-	if dpi == 0 {
-		dpi = 96
-	}
-	o.dpi = dpi
-	procDeleteObject.Call(o.pillFont)
-	procDeleteObject.Call(o.btnFont)
-	o.pillFont = o.font(15, 600)
-	o.btnFont = o.font(18, 700)
-	o.layout()
-}
-
-func (o *Overlay) font(pt, weight int32) uintptr {
-	face, _ := windows.UTF16PtrFromString("Segoe UI")
-	h := -pt * int32(o.dpi) / 72
-	f, _, _ := procCreateFontW.Call(uintptr(h), 0, 0, 0, uintptr(weight), 0, 0, 0, 1 /* DEFAULT_CHARSET */, 0, 0,
-		5 /* CLEARTYPE_QUALITY */, 0, uintptr(unsafe.Pointer(face)))
-	return f
-}
-
-// Layout in DIPs: a 280-wide pill that grows to fit its text, an 8 gap, then a 64-high button.
-func (o *Overlay) layout() {
-	w, pad := o.px(280), o.px(16)
-	text := o.pillText()
-	tr := rect{0, 0, w - pad*2 - o.px(22), 0}
-	dc, _, _ := procGetDC.Call(o.hwnd)
-	old, _, _ := procSelectObject.Call(dc, o.pillFont)
-	drawText(dc, text, &tr, dtWordBreak|dtCalcRect|dtNoPrefix)
-	procSelectObject.Call(dc, old)
-	procReleaseDC.Call(o.hwnd, dc)
-
-	pillH := max(o.px(44), tr.Bottom+o.px(20))
-	o.pill = rect{0, 0, w, pillH}
-	o.button = rect{0, pillH + o.px(8), w, pillH + o.px(8) + o.px(64)}
-	procSetWindowPos.Call(o.hwnd, 0, 0, 0, uintptr(w), uintptr(o.button.Bottom), swpNoMove|swpNoZOrder|swpNoActivate)
-	o.invalidate()
-}
-
-func (o *Overlay) pillText() string {
-	o.mu.Lock()
-	defer o.mu.Unlock()
-	return o.text
-}
-
-func (o *Overlay) paint() {
-	var ps paintStruct
-	hdc, _, _ := procBeginPaint.Call(o.hwnd, uintptr(unsafe.Pointer(&ps)))
-	defer procEndPaint.Call(o.hwnd, uintptr(unsafe.Pointer(&ps)))
-
-	w, h := o.pill.Right, o.button.Bottom
-	mem, _, _ := procCreateCompatibleDC.Call(hdc)
-	bmp, _, _ := procCreateCompatibleBmp.Call(hdc, uintptr(w), uintptr(h))
-	oldBmp, _, _ := procSelectObject.Call(mem, bmp)
-	defer func() {
-		procSelectObject.Call(mem, oldBmp)
-		procDeleteObject.Call(bmp)
-		procDeleteDC.Call(mem)
-	}()
-
-	fillRect(mem, rect{0, 0, w, h}, colKey)
-	procSetBkMode.Call(mem, 1) // TRANSPARENT
-
-	o.mu.Lock()
-	level, text := o.level, o.text
-	o.mu.Unlock()
-	bg, ink, dot := uintptr(colPill), uintptr(colWhite), uintptr(colDot)
-	switch level {
-	case Amber:
-		bg, ink, dot = colAmber, colInk, colInk
-	case Red:
-		bg, ink, dot = colRed, colWhite, colWhite
-	}
-	radius := o.px(22)
-	fillRound(mem, o.pill, radius, bg)
-	pad, d := o.px(16), o.px(12)
-	cy := (o.pill.Top + o.pill.Bottom) / 2
-	fillEllipse(mem, rect{pad, cy - d/2, pad + d, cy + d/2}, dot)
-	tr := rect{pad + d + o.px(10), o.pill.Top, o.pill.Right - pad, o.pill.Bottom}
-	o.drawCentered(mem, o.pillFont, text, tr, ink, false)
-
-	btn, label := uintptr(colButton), "I didn't get this"
-	switch {
-	case o.flash != "" && o.flashOK:
-		btn, label = colSaved, o.flash
-	case o.flash != "":
-		btn, label = colRed, o.flash
-	case o.pressed:
-		btn = colPressed
-	}
-	fillRound(mem, o.button, o.px(16), btn)
-	o.drawCentered(mem, o.btnFont, label, o.button, colWhite, true)
-
-	procBitBlt.Call(hdc, 0, 0, uintptr(w), uintptr(h), mem, 0, 0, srcCopy)
-}
-
-// drawCentered vertically centers text in r; wrapped text is measured first since DT_VCENTER needs DT_SINGLELINE.
-func (o *Overlay) drawCentered(dc, font uintptr, text string, r rect, color uintptr, center bool) {
-	old, _, _ := procSelectObject.Call(dc, font)
-	defer procSelectObject.Call(dc, old)
-	procSetTextColor.Call(dc, color)
-	flags := uintptr(dtNoPrefix)
-	if center {
-		drawText(dc, text, &r, flags|dtCenter|dtVCenter|dtSingleLine)
+func (o *Overlay) onMouseMove() {
+	if !o.dragging {
 		return
 	}
-	m := rect{r.Left, 0, r.Right, 0}
-	drawText(dc, text, &m, flags|dtWordBreak|dtCalcRect)
-	top := r.Top + (r.Bottom-r.Top-m.Bottom)/2
-	r.Top, r.Bottom = top, top+m.Bottom
-	drawText(dc, text, &r, flags|dtWordBreak)
+	mouse := cursorPosition()
+	x := o.dragStartPos.X + mouse.X - o.dragStartMouse.X
+	y := o.dragStartPos.Y + mouse.Y - o.dragStartMouse.Y
+	o.moveTo(point{X: x, Y: y})
 }
 
-func drawText(dc uintptr, s string, r *rect, flags uintptr) {
-	u, _ := windows.UTF16FromString(s)
-	procDrawTextW.Call(dc, uintptr(unsafe.Pointer(&u[0])), uintptr(len(u)-1), uintptr(unsafe.Pointer(r)), flags)
+func (o *Overlay) onLeftButtonUp(p point) {
+	wasPressed := o.buttonPressed
+	wasDragging := o.dragging
+	procReleaseCapture.Call() // triggers onCaptureLost, which clears both flags
+
+	releasedOnButton := wasPressed && o.button.contains(p)
+	if releasedOnButton {
+		o.markMoment()
+	}
+	if wasDragging {
+		savePosition(o.cfg.SettingsPath, o.windowPosition())
+	}
 }
 
-func fillRect(dc uintptr, r rect, color uintptr) {
-	b, _, _ := procCreateSolidBrush.Call(color)
-	procFillRect.Call(dc, uintptr(unsafe.Pointer(&r)), b)
-	procDeleteObject.Call(b)
+func (o *Overlay) onCaptureLost() {
+	if o.buttonPressed {
+		o.invalidate()
+	}
+	o.buttonPressed = false
+	o.dragging = false
 }
 
-func fillRound(dc uintptr, r rect, radius int32, color uintptr) {
-	rgn, _, _ := procCreateRoundRectRgn.Call(uintptr(r.Left), uintptr(r.Top), uintptr(r.Right+1), uintptr(r.Bottom+1), uintptr(radius*2), uintptr(radius*2))
-	fillRgn(dc, rgn, color)
+func (o *Overlay) onTimer(timerID uintptr) {
+	if timerID != flashTimerID {
+		return
+	}
+	procKillTimer.Call(o.hwnd, flashTimerID)
+	o.flash = buttonFlash{}
+	o.invalidate()
 }
 
-func fillEllipse(dc uintptr, r rect, color uintptr) {
-	rgn, _, _ := procCreateEllipticRgn.Call(uintptr(r.Left), uintptr(r.Top), uintptr(r.Right), uintptr(r.Bottom))
-	fillRgn(dc, rgn, color)
+func (o *Overlay) onDestroy() {
+	procDeleteObject.Call(o.pillFont)
+	procDeleteObject.Call(o.buttonFont)
+	procPostQuitMessage.Call(0)
 }
 
-func fillRgn(dc, rgn, color uintptr) {
-	b, _, _ := procCreateSolidBrush.Call(color)
-	procFillRgn.Call(dc, rgn, b)
-	procDeleteObject.Call(b)
-	procDeleteObject.Call(rgn)
+// markMoment records "I didn't get this" and flashes the result on the button for 2 s.
+func (o *Overlay) markMoment() {
+	o.flash = buttonFlash{Text: flashSaved, Saved: true}
+	if o.cfg.OnMark != nil {
+		if err := o.cfg.OnMark(); err != nil {
+			o.flash = buttonFlash{Text: flashNotSaved, Saved: false}
+		}
+	}
+	procSetTimer.Call(o.hwnd, flashTimerID, flashMillis, 0)
+	o.invalidate()
 }
 
-func (o *Overlay) invalidate() { procInvalidateRect.Call(o.hwnd, 0, 0) }
-
-func (r rect) contains(p point) bool {
-	return p.X >= r.Left && p.X < r.Right && p.Y >= r.Top && p.Y < r.Bottom
+func (o *Overlay) showWithoutActivating() {
+	procSetWindowPos.Call(o.hwnd, hwndTopmost, 0, 0, 0, 0, swpNoMove|swpNoSize|swpNoActivate)
+	procShowWindow.Call(o.hwnd, swShowNoActivate)
 }
 
-func (o *Overlay) windowPos() point {
+func (o *Overlay) moveTo(p point) {
+	procSetWindowPos.Call(o.hwnd, 0, uintptr(p.X), uintptr(p.Y), 0, 0, swpNoSize|swpNoZOrder|swpNoActivate)
+}
+
+func (o *Overlay) resizeTo(width, height int32) {
+	procSetWindowPos.Call(o.hwnd, 0, 0, 0, uintptr(width), uintptr(height), swpNoMove|swpNoZOrder|swpNoActivate)
+}
+
+func (o *Overlay) windowPosition() point {
 	var r rect
 	procGetWindowRect.Call(o.hwnd, uintptr(unsafe.Pointer(&r)))
-	return point{r.Left, r.Top}
+	return point{X: r.Left, Y: r.Top}
 }
 
-// moveToDefault puts the overlay at the right edge of its monitor's work area, vertically centered,
-// clear of Zoom's and Meet's bottom control bars.
-func (o *Overlay) moveToDefault() {
-	mon, _, _ := procMonitorFromWindow.Call(o.hwnd, monitorDefaultNea)
-	mi := monitorInfo{}
-	mi.Size = uint32(unsafe.Sizeof(mi))
-	procGetMonitorInfoW.Call(mon, uintptr(unsafe.Pointer(&mi)))
-	w, h := o.pill.Right, o.button.Bottom
-	x := mi.Work.Right - w - o.px(16)
-	y := mi.Work.Top + (mi.Work.Bottom-mi.Work.Top-h)/2
-	procSetWindowPos.Call(o.hwnd, 0, uintptr(x), uintptr(y), 0, 0, swpNoSize|swpNoZOrder|swpNoActivate)
+// moveToDefaultPosition puts the overlay at the right edge of its monitor's work area, vertically
+// centered, clear of Zoom's and Meet's bottom control bars.
+func (o *Overlay) moveToDefaultPosition() {
+	monitor, _, _ := procMonitorFromWindow.Call(o.hwnd, monitorDefaultToNearest)
+	info := monitorInfo{}
+	info.Size = uint32(unsafe.Sizeof(info))
+	procGetMonitorInfoW.Call(monitor, uintptr(unsafe.Pointer(&info)))
+
+	work := info.WorkArea
+	width := o.pill.width()
+	height := o.button.Bottom
+	x := work.Right - width - o.px(edgeMargin)
+	y := work.Top + (work.height()-height)/2
+	o.moveTo(point{X: x, Y: y})
 }
 
-func onScreen(p point) bool {
-	m, _, _ := procMonitorFromPoint.Call(uintptr(uint32(p.X))|uintptr(uint32(p.Y))<<32, monitorDefaultNul)
-	return m != 0
+func isOnAnyMonitor(p point) bool {
+	// MonitorFromPoint takes a POINT by value, packed into one 64-bit register.
+	packed := uintptr(uint32(p.X)) | uintptr(uint32(p.Y))<<32
+	monitor, _, _ := procMonitorFromPoint.Call(packed, monitorDefaultToNull)
+	return monitor != 0
+}
+
+func cursorPosition() point {
+	var p point
+	procGetCursorPos.Call(uintptr(unsafe.Pointer(&p)))
+	return p
 }
 
 // DPIAwareness reports whether the process runs per-monitor v2, i.e. whether the embedded manifest took effect.
 func DPIAwareness() bool {
-	ctx, _, _ := procGetThreadDpiContext.Call()
-	eq, _, _ := procAreDpiContextsEqual.Call(ctx, dpiPerMonitorV2)
-	return eq != 0
+	context, _, _ := procGetThreadDpiContext.Call()
+	equal, _, _ := procAreDpiContextsEqual.Call(context, dpiAwarenessPerMonitorV2)
+	return equal != 0
 }

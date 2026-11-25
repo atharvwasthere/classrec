@@ -39,11 +39,27 @@ type MicUse struct {
 }
 
 // InUse reports whether the app has the mic open right now.
-func (m MicUse) InUse() bool { return m.Stop == 0 && m.Start != 0 }
+func (m MicUse) InUse() bool {
+	everUsed := m.Start != 0
+	notStopped := m.Stop == 0
+	return everUsed && notStopped
+}
 
+// The two class apps.
 const (
 	Zoom = "Zoom"
 	Meet = "Meet"
+)
+
+const (
+	zoomExeName = "zoom.exe"
+	edgeExeName = "msedge.exe"
+
+	// UNVERIFIED: the Zoom meeting window's class and title come from Zoom 5.x/6.x reports,
+	// to be checked against a real --debug-detect log.
+	zoomMeetingClass = "ConfMultiTabContentWndClass"
+	zoomMeetingTitle = "Zoom Meeting"
+	meetTitleWord    = "Meet"
 )
 
 // Observation is what one Sample says about Zoom and Meet.
@@ -58,52 +74,79 @@ type Observation struct {
 func Classify(s Sample) Observation {
 	var o Observation
 	for _, w := range s.Windows {
-		switch exe := baseName(w.Exe, `\/`); {
-		case strings.EqualFold(exe, "zoom.exe") && o.ZoomWindow == "" && isZoomMeeting(w):
+		if o.ZoomWindow == "" && isZoomMeetingWindow(w) {
 			o.ZoomWindow = w.Title
-		case strings.EqualFold(exe, "msedge.exe") && o.MeetWindow == "" && hasWord(w.Title, "Meet"):
+		}
+		if o.MeetWindow == "" && isMeetWindow(w) {
 			o.MeetWindow = w.Title
 		}
 	}
 	for _, m := range s.Mic {
-		if !m.InUse() {
-			continue
-		}
-		switch exe := baseName(m.Path, "#"); {
-		case strings.EqualFold(exe, "zoom.exe"):
+		if isMicInUseBy(m, zoomExeName) {
 			o.ZoomMic = true
-		case strings.EqualFold(exe, "msedge.exe"):
+		}
+		if isMicInUseBy(m, edgeExeName) {
 			o.EdgeMic = true
 		}
 	}
 	return o
 }
 
-// isZoomMeeting matches the meeting window by class or title. UNVERIFIED: both come from
-// Zoom 5.x/6.x reports and must be checked against a real --debug-detect log.
-func isZoomMeeting(w Window) bool {
-	return w.Class == "ConfMultiTabContentWndClass" || strings.Contains(w.Title, "Zoom Meeting")
+func isZoomMeetingWindow(w Window) bool {
+	if !isExe(w.Exe, `\/`, zoomExeName) {
+		return false
+	}
+	hasMeetingClass := w.Class == zoomMeetingClass
+	hasMeetingTitle := strings.Contains(w.Title, zoomMeetingTitle)
+	return hasMeetingClass || hasMeetingTitle
+}
+
+func isMeetWindow(w Window) bool {
+	if !isExe(w.Exe, `\/`, edgeExeName) {
+		return false
+	}
+	return hasWord(w.Title, meetTitleWord)
+}
+
+func isMicInUseBy(m MicUse, exe string) bool {
+	if !m.InUse() {
+		return false
+	}
+	return isExe(m.Path, "#", exe)
+}
+
+// isExe reports whether path ends in the file name exe, ignoring case. separators are the path separators path uses.
+func isExe(path, separators, exe string) bool {
+	lastSeparator := strings.LastIndexAny(path, separators)
+	fileName := path[lastSeparator+1:]
+	return strings.EqualFold(fileName, exe)
 }
 
 // hasWord matches word as a whole word, so "Meet - abc" matches and "Meeting notes" does not.
-func hasWord(s, word string) bool {
-	for i := 0; ; {
-		j := strings.Index(s[i:], word)
-		if j < 0 {
+func hasWord(text, word string) bool {
+	searchFrom := 0
+	for {
+		found := strings.Index(text[searchFrom:], word)
+		if found < 0 {
 			return false
 		}
-		start, end := i+j, i+j+len(word)
-		before, _ := utf8.DecodeLastRuneInString(s[:start])
-		after, _ := utf8.DecodeRuneInString(s[end:])
-		if !unicode.IsLetter(before) && !unicode.IsLetter(after) {
+		start := searchFrom + found
+		end := start + len(word)
+		if !letterBefore(text, start) && !letterAfter(text, end) {
 			return true
 		}
-		i = end
+		searchFrom = end
 	}
 }
 
-func baseName(path, seps string) string {
-	return path[strings.LastIndexAny(path, seps)+1:]
+func letterBefore(text string, i int) bool {
+	r, _ := utf8.DecodeLastRuneInString(text[:i])
+	return unicode.IsLetter(r)
+}
+
+func letterAfter(text string, i int) bool {
+	r, _ := utf8.DecodeRuneInString(text[i:])
+	return unicode.IsLetter(r)
 }
 
 // Phase is where the state machine is.
@@ -124,15 +167,35 @@ type Config struct {
 
 var DefaultConfig = Config{Hold: 10 * time.Second, Grace: 3 * time.Minute}
 
+// EventKind says whether recording should start or stop.
+type EventKind string
+
+const (
+	Start EventKind = "start"
+	Stop  EventKind = "stop"
+)
+
 // Event is a start or stop decision.
 type Event struct {
-	Kind  string    `json:"kind"` // "start" or "stop"
+	Kind  EventKind `json:"kind"`
 	At    time.Time `json:"at"`
 	App   string    `json:"app"` // Zoom or Meet
 	Title string    `json:"title"`
 }
 
+// classSignal is a meeting window that can start a class.
+type classSignal struct {
+	App   string
+	Title string
+}
+
+func (s classSignal) present() bool { return s.App != "" }
+
 // Machine is the detection state machine. The zero value is Idle.
+//
+// A class can only start from a meeting window, because Edge opens the mic for other sites too.
+// Once recording, the app's mic alone keeps it going, so a tab switch in Edge doesn't end it,
+// and the window alone keeps it going, so muting doesn't end it.
 type Machine struct {
 	Cfg   Config
 	Phase Phase
@@ -142,46 +205,81 @@ type Machine struct {
 }
 
 // Step advances the machine with one observation and returns a start or stop event, if any.
-// A class can only start from a meeting window, because Edge opens the mic for other sites too.
-// Once recording, the app's mic alone keeps it going, so a tab switch in Edge doesn't end it,
-// and the window alone keeps it going, so muting doesn't end it.
 func (m *Machine) Step(t time.Time, o Observation) *Event {
-	app, title := startSignal(o)
 	switch m.Phase {
-	case "", Idle:
-		if app != "" {
-			m.Phase, m.Since, m.App, m.Title = Candidate, t, app, title
-		}
 	case Candidate:
-		if app == "" {
-			m.reset()
-			return nil
-		}
-		if t.Sub(m.Since) >= m.Cfg.Hold {
-			m.Phase = Recording
-			return &Event{Kind: "start", At: t, App: m.App, Title: m.Title}
-		}
+		return m.stepCandidate(t, o)
 	case Recording:
-		if !m.sustained(o) {
-			m.Phase, m.Since = Ending, t
-		}
+		return m.stepRecording(t, o)
 	case Ending:
-		if m.sustained(o) {
-			m.Phase = Recording
-			return nil
-		}
-		if t.Sub(m.Since) >= m.Cfg.Grace {
-			e := &Event{Kind: "stop", At: t, App: m.App, Title: m.Title}
-			m.reset()
-			return e
-		}
+		return m.stepEnding(t, o)
+	default:
+		return m.stepIdle(t, o)
 	}
+}
+
+func (m *Machine) stepIdle(t time.Time, o Observation) *Event {
+	signal := startSignal(o)
+	if !signal.present() {
+		return nil
+	}
+	m.Phase = Candidate
+	m.Since = t
+	m.App = signal.App
+	m.Title = signal.Title
 	return nil
 }
 
-func (m *Machine) reset() { m.Phase, m.Since, m.App, m.Title = Idle, time.Time{}, "", "" }
+func (m *Machine) stepCandidate(t time.Time, o Observation) *Event {
+	signal := startSignal(o)
+	if !signal.present() {
+		m.reset()
+		return nil
+	}
+	heldFor := t.Sub(m.Since)
+	if heldFor < m.Cfg.Hold {
+		return nil
+	}
+	m.Phase = Recording
+	return m.event(Start, t)
+}
 
-func (m *Machine) sustained(o Observation) bool {
+func (m *Machine) stepRecording(t time.Time, o Observation) *Event {
+	if m.classStillOn(o) {
+		return nil
+	}
+	m.Phase = Ending
+	m.Since = t
+	return nil
+}
+
+func (m *Machine) stepEnding(t time.Time, o Observation) *Event {
+	if m.classStillOn(o) {
+		m.Phase = Recording
+		return nil
+	}
+	goneFor := t.Sub(m.Since)
+	if goneFor < m.Cfg.Grace {
+		return nil
+	}
+	stop := m.event(Stop, t)
+	m.reset()
+	return stop
+}
+
+func (m *Machine) event(kind EventKind, t time.Time) *Event {
+	return &Event{Kind: kind, At: t, App: m.App, Title: m.Title}
+}
+
+func (m *Machine) reset() {
+	m.Phase = Idle
+	m.Since = time.Time{}
+	m.App = ""
+	m.Title = ""
+}
+
+// classStillOn reports whether the app being recorded still shows its meeting window or holds the mic.
+func (m *Machine) classStillOn(o Observation) bool {
 	if m.App == Zoom {
 		return o.ZoomWindow != "" || o.ZoomMic
 	}
@@ -189,14 +287,14 @@ func (m *Machine) sustained(o Observation) bool {
 }
 
 // startSignal prefers Zoom when both are open; she attends one class at a time.
-func startSignal(o Observation) (app, title string) {
-	switch {
-	case o.ZoomWindow != "":
-		return Zoom, o.ZoomWindow
-	case o.MeetWindow != "":
-		return Meet, o.MeetWindow
+func startSignal(o Observation) classSignal {
+	if o.ZoomWindow != "" {
+		return classSignal{App: Zoom, Title: o.ZoomWindow}
 	}
-	return "", ""
+	if o.MeetWindow != "" {
+		return classSignal{App: Meet, Title: o.MeetWindow}
+	}
+	return classSignal{}
 }
 
 // Replay runs a fresh machine over samples and returns the events it produced.
@@ -204,7 +302,8 @@ func Replay(samples []Sample, cfg Config) []Event {
 	m := Machine{Cfg: cfg}
 	var events []Event
 	for _, s := range samples {
-		if e := m.Step(s.Time, Classify(s)); e != nil {
+		e := m.Step(s.Time, Classify(s))
+		if e != nil {
 			events = append(events, *e)
 		}
 	}
@@ -213,18 +312,23 @@ func Replay(samples []Sample, cfg Config) []Event {
 
 // ReadJSONL reads samples written by --debug-detect. Extra fields on a line are ignored.
 func ReadJSONL(r io.Reader) ([]Sample, error) {
+	const maxLineBytes = 16 * 1024 * 1024
+	scanner := bufio.NewScanner(r)
+	scanner.Buffer(make([]byte, 0, 64*1024), maxLineBytes)
+
 	var samples []Sample
-	sc := bufio.NewScanner(r)
-	sc.Buffer(make([]byte, 0, 64*1024), 16*1024*1024)
-	for n := 1; sc.Scan(); n++ {
-		if strings.TrimSpace(sc.Text()) == "" {
+	lineNumber := 0
+	for scanner.Scan() {
+		lineNumber++
+		line := scanner.Bytes()
+		if strings.TrimSpace(string(line)) == "" {
 			continue
 		}
 		var s Sample
-		if err := json.Unmarshal(sc.Bytes(), &s); err != nil {
-			return nil, fmt.Errorf("line %d: %w", n, err)
+		if err := json.Unmarshal(line, &s); err != nil {
+			return nil, fmt.Errorf("line %d: %w", lineNumber, err)
 		}
 		samples = append(samples, s)
 	}
-	return samples, sc.Err()
+	return samples, scanner.Err()
 }

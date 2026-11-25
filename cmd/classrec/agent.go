@@ -30,11 +30,11 @@ func runAgent(ctx context.Context, args []string) error {
 	if err := fs.Parse(args); err != nil {
 		return err
 	}
-	mode, source, err := agentMode(*modeFlag, settingsPath())
+	mode, err := agentMode(*modeFlag, settingsPath())
 	if err != nil {
 		return err
 	}
-	fmt.Fprintf(os.Stderr, "mode: %s (%s)\n", mode, source)
+	fmt.Fprintf(os.Stderr, "mode: %s (%s)\n", mode.Mode, mode.Source)
 	if !*debug {
 		return errors.New("only agent --debug-detect is implemented so far")
 	}

@@ -2,6 +2,10 @@
 // as resource RT_MANIFEST #1, so the Windows build needs no cgo or resource compiler.
 //
 //	go run ./tools/winres <manifest> <out.syso>
+//
+// The object holds one .rsrc section: a three-level resource directory (type → name → language)
+// ending in a data entry that points at the manifest bytes. That pointer is an RVA the linker fills
+// in, so the object also carries one relocation and one section symbol for it to resolve against.
 package main
 
 import (
@@ -12,16 +16,90 @@ import (
 )
 
 const (
-	rtManifest     = 24
-	langEnUS       = 0x409
-	subdirFlag     = 0x80000000
-	relAddr32NB    = 3 // IMAGE_REL_AMD64_ADDR32NB: the data entry holds an RVA
-	scnFlags       = 0x40000040
-	machineAMD64   = 0x8664
-	coffHeaderSize = 20
-	sectionHdrSize = 40
-	dataEntryOff   = 72 // three 16-byte directories, each followed by one 8-byte entry
-	manifestOff    = dataEntryOff + 16
+	machineAMD64          = 0x8664
+	sectionCharacteristic = 0x40000040 // IMAGE_SCN_CNT_INITIALIZED_DATA | IMAGE_SCN_MEM_READ
+	relocationAddr32NB    = 3          // IMAGE_REL_AMD64_ADDR32NB: a 32-bit RVA
+	symbolClassStatic     = 3          // IMAGE_SYM_CLASS_STATIC
+
+	resourceTypeManifest = 24
+	manifestResourceID   = 1
+	languageEnglishUS    = 0x409
+	pointsToSubdirectory = 0x80000000 // high bit of a directory entry's target
+
+	// Offsets inside the .rsrc section. Each directory is a 16-byte header plus one 8-byte entry.
+	typeDirectoryOffset     = 0
+	nameDirectoryOffset     = 24
+	languageDirectoryOffset = 48
+	dataEntryOffset         = 72
+	manifestOffset          = dataEntryOffset + 16
+)
+
+var sectionName = [8]byte{'.', 'r', 's', 'r', 'c'}
+
+type coffHeader struct {
+	Machine              uint16
+	NumberOfSections     uint16
+	TimeDateStamp        uint32
+	PointerToSymbolTable uint32
+	NumberOfSymbols      uint32
+	SizeOfOptionalHeader uint16
+	Characteristics      uint16
+}
+
+type sectionHeader struct {
+	Name                 [8]byte
+	VirtualSize          uint32
+	VirtualAddress       uint32
+	SizeOfRawData        uint32
+	PointerToRawData     uint32
+	PointerToRelocations uint32
+	PointerToLinenumbers uint32
+	NumberOfRelocations  uint16
+	NumberOfLinenumbers  uint16
+	Characteristics      uint32
+}
+
+type relocation struct {
+	VirtualAddress   uint32
+	SymbolTableIndex uint32
+	Type             uint16
+}
+
+type symbol struct {
+	Name               [8]byte
+	Value              uint32
+	SectionNumber      int16
+	Type               uint16
+	StorageClass       uint8
+	NumberOfAuxSymbols uint8
+}
+
+type resourceDirectory struct {
+	Characteristics      uint32
+	TimeDateStamp        uint32
+	MajorVersion         uint16
+	MinorVersion         uint16
+	NumberOfNamedEntries uint16
+	NumberOfIDEntries    uint16
+}
+
+type resourceDirectoryEntry struct {
+	ID     uint32
+	Target uint32 // offset of a subdirectory (with pointsToSubdirectory set) or of a data entry
+}
+
+type resourceDataEntry struct {
+	DataRVA  uint32 // holds the offset in the section; the linker adds the section's RVA
+	Size     uint32
+	CodePage uint32
+	Reserved uint32
+}
+
+const (
+	coffHeaderSize    = 20
+	sectionHeaderSize = 40
+	relocationSize    = 10
+	emptyStringTable  = uint32(4) // the string table's size field counts itself
 )
 
 func main() {
@@ -29,61 +107,79 @@ func main() {
 		fmt.Fprintln(os.Stderr, "usage: winres <manifest> <out.syso>")
 		os.Exit(2)
 	}
-	manifest, err := os.ReadFile(os.Args[1])
-	if err == nil {
-		err = os.WriteFile(os.Args[2], build(manifest), 0o644)
-	}
-	if err != nil {
+	if err := run(os.Args[1], os.Args[2]); err != nil {
 		fmt.Fprintln(os.Stderr, err)
 		os.Exit(1)
 	}
 }
 
-func build(manifest []byte) []byte {
-	le := binary.LittleEndian
-	var sec bytes.Buffer
-	dir := func(id, target uint32) {
-		binary.Write(&sec, le, [4]uint32{0, 0, 0, 1 << 16}) // characteristics, time, version, 0 named + 1 id entry
-		binary.Write(&sec, le, [2]uint32{id, target})
+func run(manifestPath, outPath string) error {
+	manifest, err := os.ReadFile(manifestPath)
+	if err != nil {
+		return err
 	}
-	dir(rtManifest, subdirFlag|24)
-	dir(1, subdirFlag|48)
-	dir(langEnUS, dataEntryOff)
-	binary.Write(&sec, le, [4]uint32{manifestOff, uint32(len(manifest)), 0, 0}) // RVA addend, size, codepage, reserved
-	sec.Write(manifest)
-	for sec.Len()%8 != 0 {
-		sec.WriteByte(0)
-	}
+	return os.WriteFile(outPath, buildObject(manifest), 0o644)
+}
 
-	rawOff := uint32(coffHeaderSize + sectionHdrSize)
-	relocOff := rawOff + uint32(sec.Len())
-	symOff := relocOff + 10
+func buildObject(manifest []byte) []byte {
+	section := buildResourceSection(manifest)
+
+	rawDataOffset := uint32(coffHeaderSize + sectionHeaderSize)
+	relocationsOffset := rawDataOffset + uint32(len(section))
+	symbolTableOffset := relocationsOffset + relocationSize
 
 	var out bytes.Buffer
-	binary.Write(&out, le, struct {
-		Machine, Sections              uint16
-		Time, SymTable, Symbols        uint32
-		OptHeaderSize, Characteristics uint16
-	}{machineAMD64, 1, 0, symOff, 1, 0, 0})
-	binary.Write(&out, le, struct {
-		Name                                 [8]byte
-		VirtualSize, VirtualAddress, RawSize uint32
-		RawOff, RelocOff, LineOff            uint32
-		Relocs, Lines                        uint16
-		Characteristics                      uint32
-	}{[8]byte{'.', 'r', 's', 'r', 'c'}, 0, 0, uint32(sec.Len()), rawOff, relocOff, 0, 1, 0, scnFlags})
-	out.Write(sec.Bytes())
-	binary.Write(&out, le, struct {
-		Addr, Sym uint32
-		Type      uint16
-	}{dataEntryOff, 0, relAddr32NB})
-	binary.Write(&out, le, struct {
-		Name       [8]byte
-		Value      uint32
-		Section    int16
-		Type       uint16
-		Class, Aux uint8
-	}{[8]byte{'.', 'r', 's', 'r', 'c'}, 0, 1, 0, 3, 0}) // section symbol, IMAGE_SYM_CLASS_STATIC
-	binary.Write(&out, le, uint32(4)) // empty string table
+	write(&out, coffHeader{
+		Machine:              machineAMD64,
+		NumberOfSections:     1,
+		PointerToSymbolTable: symbolTableOffset,
+		NumberOfSymbols:      1,
+	})
+	write(&out, sectionHeader{
+		Name:                 sectionName,
+		SizeOfRawData:        uint32(len(section)),
+		PointerToRawData:     rawDataOffset,
+		PointerToRelocations: relocationsOffset,
+		NumberOfRelocations:  1,
+		Characteristics:      sectionCharacteristic,
+	})
+	out.Write(section)
+	write(&out, relocation{
+		VirtualAddress:   dataEntryOffset,
+		SymbolTableIndex: 0,
+		Type:             relocationAddr32NB,
+	})
+	write(&out, symbol{
+		Name:          sectionName,
+		SectionNumber: 1,
+		StorageClass:  symbolClassStatic,
+	})
+	write(&out, emptyStringTable)
 	return out.Bytes()
+}
+
+func buildResourceSection(manifest []byte) []byte {
+	var section bytes.Buffer
+	writeDirectoryWithOneEntry(&section, resourceTypeManifest, pointsToSubdirectory|nameDirectoryOffset)
+	writeDirectoryWithOneEntry(&section, manifestResourceID, pointsToSubdirectory|languageDirectoryOffset)
+	writeDirectoryWithOneEntry(&section, languageEnglishUS, dataEntryOffset)
+	write(&section, resourceDataEntry{
+		DataRVA: manifestOffset,
+		Size:    uint32(len(manifest)),
+	})
+	section.Write(manifest)
+	for section.Len()%8 != 0 {
+		section.WriteByte(0)
+	}
+	return section.Bytes()
+}
+
+func writeDirectoryWithOneEntry(section *bytes.Buffer, id, target uint32) {
+	write(section, resourceDirectory{NumberOfIDEntries: 1})
+	write(section, resourceDirectoryEntry{ID: id, Target: target})
+}
+
+// write appends v in little-endian; writing to a bytes.Buffer cannot fail.
+func write(buf *bytes.Buffer, v any) {
+	binary.Write(buf, binary.LittleEndian, v)
 }

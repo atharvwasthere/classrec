@@ -7,38 +7,69 @@ import (
 	"path/filepath"
 )
 
-// Modes of the agent. Only full runs the Sarvam pipeline after a class.
+// Mode is what the agent does after a class. Only modeFull runs the Sarvam pipeline.
+type Mode string
+
 const (
-	modeRecord = "record"
-	modeFull   = "full"
+	modeRecord Mode = "record"
+	modeFull   Mode = "full"
 )
 
-func settingsPath() string { return filepath.Join(exeDir(), "settings.json") }
+// modeChoice is the mode in effect and where it came from, for the startup log.
+type modeChoice struct {
+	Mode   Mode
+	Source string
+}
+
+func settingsPath() string {
+	return filepath.Join(exeDir(), "settings.json")
+}
 
 // agentMode picks the mode from the --mode flag, else settings.json, else record.
-// Anything unreadable or unknown in the file means record, so Sarvam is never called by accident.
-// source says where the mode came from, for the startup log.
-func agentMode(flagVal, settingsFile string) (mode, source string, err error) {
-	switch flagVal {
-	case modeRecord, modeFull:
-		return flagVal, "--mode flag", nil
-	case "":
-	default:
-		return "", "", fmt.Errorf("--mode must be %s or %s, not %q", modeRecord, modeFull, flagVal)
+// A wrong flag is an error, since someone typed it on purpose. Anything unreadable or unknown
+// in the file means record, so Sarvam is never called by accident.
+func agentMode(flagValue, settingsFile string) (modeChoice, error) {
+	if flagValue != "" {
+		return modeFromFlag(flagValue)
 	}
-	b, err := os.ReadFile(settingsFile)
+	return modeFromSettings(settingsFile), nil
+}
+
+func modeFromFlag(flagValue string) (modeChoice, error) {
+	mode := Mode(flagValue)
+	if !isKnownMode(mode) {
+		return modeChoice{}, fmt.Errorf("--mode must be %s or %s, not %q", modeRecord, modeFull, flagValue)
+	}
+	return modeChoice{Mode: mode, Source: "--mode flag"}, nil
+}
+
+func modeFromSettings(settingsFile string) modeChoice {
+	content, err := os.ReadFile(settingsFile)
 	if err != nil {
-		return modeRecord, "default, no " + settingsFile, nil
+		return recordByDefault("no " + settingsFile)
 	}
-	var s struct{ Mode *string }
-	if err := json.Unmarshal(b, &s); err != nil {
-		return modeRecord, "default, " + settingsFile + " is not valid JSON", nil
+
+	var settings struct {
+		Mode *string `json:"mode"`
 	}
-	switch {
-	case s.Mode == nil:
-		return modeRecord, "default, no mode in " + settingsFile, nil
-	case *s.Mode == modeRecord || *s.Mode == modeFull:
-		return *s.Mode, settingsFile, nil
+	if err := json.Unmarshal(content, &settings); err != nil {
+		return recordByDefault(settingsFile + " is not valid JSON")
 	}
-	return modeRecord, fmt.Sprintf("default, unknown mode %q in %s", *s.Mode, settingsFile), nil
+	if settings.Mode == nil {
+		return recordByDefault("no mode in " + settingsFile)
+	}
+
+	mode := Mode(*settings.Mode)
+	if !isKnownMode(mode) {
+		return recordByDefault(fmt.Sprintf("unknown mode %q in %s", *settings.Mode, settingsFile))
+	}
+	return modeChoice{Mode: mode, Source: settingsFile}
+}
+
+func recordByDefault(reason string) modeChoice {
+	return modeChoice{Mode: modeRecord, Source: "default, " + reason}
+}
+
+func isKnownMode(mode Mode) bool {
+	return mode == modeRecord || mode == modeFull
 }

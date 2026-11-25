@@ -20,121 +20,169 @@ var (
 	procGetWindowTextW   = user32.NewProc("GetWindowTextW")
 	procGetWindowTextLen = user32.NewProc("GetWindowTextLengthW")
 	procIsIconic         = user32.NewProc("IsIconic")
+)
 
-	// One callback for the process's life: Windows callbacks are never freed.
+// EnumWindows reports each window through a callback. Windows never frees a callback, so there is
+// exactly one for the process, and it appends into enumFound under enumMu.
+var (
+	enumMu       sync.Mutex
+	enumFound    []windows.HWND
 	enumCallback = windows.NewCallback(func(hwnd windows.HWND, _ uintptr) uintptr {
 		enumFound = append(enumFound, hwnd)
-		return 1
+		const continueEnumerating = 1
+		return continueEnumerating
 	})
-	enumMu    sync.Mutex
-	enumFound []windows.HWND
 )
 
 // Snapshot observes all titled top-level windows and the mic entries of interest.
 func Snapshot(now time.Time) detect.Sample {
-	return detect.Sample{Time: now, Windows: windowsNow(), Mic: micNow()}
+	return detect.Sample{
+		Time:    now,
+		Windows: describeWindows(listTopLevelWindows()),
+		Mic:     micNow(),
+	}
 }
 
-func windowsNow() []detect.Window {
+func listTopLevelWindows() []windows.HWND {
 	enumMu.Lock()
+	defer enumMu.Unlock()
 	enumFound = enumFound[:0]
 	windows.EnumWindows(enumCallback, nil)
-	hwnds := append([]windows.HWND(nil), enumFound...)
-	enumMu.Unlock()
+	found := make([]windows.HWND, len(enumFound))
+	copy(found, enumFound)
+	return found
+}
 
-	fg := windows.GetForegroundWindow()
-	exes := map[uint32]string{}
-	var out []detect.Window
-	for _, h := range hwnds {
-		title := windowText(h)
+func describeWindows(hwnds []windows.HWND) []detect.Window {
+	foreground := windows.GetForegroundWindow()
+	exeByProcess := map[uint32]string{}
+	var described []detect.Window
+	for _, hwnd := range hwnds {
+		title := windowText(hwnd)
 		if title == "" {
 			continue
 		}
-		var pid uint32
-		windows.GetWindowThreadProcessId(h, &pid)
-		exe, ok := exes[pid]
-		if !ok {
-			exe = exePath(pid)
-			exes[pid] = exe
-		}
-		visible := windows.IsWindowVisible(h)
-		// Hidden windows of other apps are noise; Zoom and Edge hidden windows may still tell us something.
-		if !visible && !isClassApp(exe) {
+		exe := ownerExe(hwnd, exeByProcess)
+		visible := windows.IsWindowVisible(hwnd)
+		if !shouldLog(visible, exe) {
 			continue
 		}
-		iconic, _, _ := procIsIconic.Call(uintptr(h))
-		var cloaked uint32
-		windows.DwmGetWindowAttribute(h, windows.DWMWA_CLOAKED, unsafe.Pointer(&cloaked), 4)
-		out = append(out, detect.Window{
-			Exe: exe, Title: title, Class: className(h),
-			Visible: visible, Minimized: iconic != 0, Cloaked: cloaked != 0, Foreground: h == fg,
+		described = append(described, detect.Window{
+			Exe:        exe,
+			Title:      title,
+			Class:      className(hwnd),
+			Visible:    visible,
+			Minimized:  isMinimized(hwnd),
+			Cloaked:    isCloaked(hwnd),
+			Foreground: hwnd == foreground,
 		})
 	}
-	return out
+	return described
 }
 
-func isClassApp(exe string) bool {
-	base := strings.ToLower(exe[strings.LastIndexAny(exe, `\/#`)+1:])
-	return base == "zoom.exe" || base == "msedge.exe"
+// shouldLog drops hidden windows of other apps, which are noise; hidden Zoom and Edge windows may still tell us something.
+func shouldLog(visible bool, exe string) bool {
+	if visible {
+		return true
+	}
+	return isClassApp(exe)
 }
 
-func windowText(h windows.HWND) string {
-	n, _, _ := procGetWindowTextLen.Call(uintptr(h))
-	if n == 0 {
+// ownerExe returns the full exe path of the window's process, looking each process up once per snapshot.
+func ownerExe(hwnd windows.HWND, exeByProcess map[uint32]string) string {
+	var pid uint32
+	windows.GetWindowThreadProcessId(hwnd, &pid)
+	exe, known := exeByProcess[pid]
+	if !known {
+		exe = exePath(pid)
+		exeByProcess[pid] = exe
+	}
+	return exe
+}
+
+// isClassApp reports whether a path (with \ or / separators, or # as in the registry) is Zoom or Edge.
+func isClassApp(path string) bool {
+	lastSeparator := strings.LastIndexAny(path, `\/#`)
+	fileName := strings.ToLower(path[lastSeparator+1:])
+	return fileName == "zoom.exe" || fileName == "msedge.exe"
+}
+
+func windowText(hwnd windows.HWND) string {
+	length, _, _ := procGetWindowTextLen.Call(uintptr(hwnd))
+	if length == 0 {
 		return ""
 	}
-	buf := make([]uint16, n+1)
-	procGetWindowTextW.Call(uintptr(h), uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)))
+	buf := make([]uint16, length+1)
+	procGetWindowTextW.Call(uintptr(hwnd), uintptr(unsafe.Pointer(&buf[0])), uintptr(len(buf)))
 	return windows.UTF16ToString(buf)
 }
 
-func className(h windows.HWND) string {
+func className(hwnd windows.HWND) string {
 	buf := make([]uint16, 256)
-	n, err := windows.GetClassName(h, &buf[0], int32(len(buf)))
+	copied, err := windows.GetClassName(hwnd, &buf[0], int32(len(buf)))
 	if err != nil {
 		return ""
 	}
-	return windows.UTF16ToString(buf[:n])
+	return windows.UTF16ToString(buf[:copied])
+}
+
+func isMinimized(hwnd windows.HWND) bool {
+	iconic, _, _ := procIsIconic.Call(uintptr(hwnd))
+	return iconic != 0
+}
+
+// isCloaked is true for windows Windows hides without un-showing them, e.g. on another virtual desktop.
+func isCloaked(hwnd windows.HWND) bool {
+	var cloaked uint32
+	windows.DwmGetWindowAttribute(hwnd, windows.DWMWA_CLOAKED, unsafe.Pointer(&cloaked), uint32(unsafe.Sizeof(cloaked)))
+	return cloaked != 0
 }
 
 func exePath(pid uint32) string {
-	p, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
+	process, err := windows.OpenProcess(windows.PROCESS_QUERY_LIMITED_INFORMATION, false, pid)
 	if err != nil {
 		return ""
 	}
-	defer windows.CloseHandle(p)
+	defer windows.CloseHandle(process)
 	buf := make([]uint16, windows.MAX_LONG_PATH)
-	n := uint32(len(buf))
-	if err := windows.QueryFullProcessImageName(p, 0, &buf[0], &n); err != nil {
+	size := uint32(len(buf))
+	if err := windows.QueryFullProcessImageName(process, 0, &buf[0], &size); err != nil {
 		return ""
 	}
-	return windows.UTF16ToString(buf[:n])
+	return windows.UTF16ToString(buf[:size])
 }
 
 // micNow returns the Zoom and Edge entries, plus any other app that has the mic open.
 func micNow() []detect.MicUse {
-	k, err := registry.OpenKey(registry.CURRENT_USER, micKey, registry.ENUMERATE_SUB_KEYS)
+	appsKey, err := registry.OpenKey(registry.CURRENT_USER, micKey, registry.ENUMERATE_SUB_KEYS)
 	if err != nil {
 		return nil
 	}
-	defer k.Close()
-	names, err := k.ReadSubKeyNames(-1)
+	defer appsKey.Close()
+	appNames, err := appsKey.ReadSubKeyNames(-1)
 	if err != nil {
 		return nil
 	}
-	var out []detect.MicUse
-	for _, name := range names {
-		sk, err := registry.OpenKey(k, name, registry.QUERY_VALUE)
-		if err != nil {
+	var entries []detect.MicUse
+	for _, appName := range appNames {
+		entry, ok := readMicEntry(appsKey, appName)
+		if !ok {
 			continue
 		}
-		start, _, _ := sk.GetIntegerValue("LastUsedTimeStart")
-		stop, _, _ := sk.GetIntegerValue("LastUsedTimeStop")
-		sk.Close()
-		m := detect.MicUse{Path: name, Start: int64(start), Stop: int64(stop)}
-		if m.InUse() || isClassApp(name) {
-			out = append(out, m)
+		if entry.InUse() || isClassApp(appName) {
+			entries = append(entries, entry)
 		}
 	}
-	return out
+	return entries
+}
+
+func readMicEntry(appsKey registry.Key, appName string) (detect.MicUse, bool) {
+	appKey, err := registry.OpenKey(appsKey, appName, registry.QUERY_VALUE)
+	if err != nil {
+		return detect.MicUse{}, false
+	}
+	defer appKey.Close()
+	start, _, _ := appKey.GetIntegerValue("LastUsedTimeStart")
+	stop, _, _ := appKey.GetIntegerValue("LastUsedTimeStop")
+	return detect.MicUse{Path: appName, Start: int64(start), Stop: int64(stop)}, true
 }
