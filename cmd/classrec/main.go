@@ -16,7 +16,8 @@ import (
 	"classrec/internal/sarvam"
 )
 
-const usage = `usage: classrec process <video> [flags]
+const usage = `usage: classrec process <video or class folder> [flags]
+       classrec calibrate <recording.mkv>...   (sets the silence threshold from real classes)
        classrec agent [--debug-detect] [--interval 10s] [--mode record|full] [--root <folder>] [--obs-url ws://localhost:4455]
        classrec install [--root <folder>]   (OBS closed: writes the classrec OBS profile)
        classrec record-test [--app meet|zoom] [--seconds 30]   (records a clip with the real OBS)
@@ -50,6 +51,8 @@ func run(args []string) error {
 			return runProcess(ctx, args)
 		case "agent":
 			return runAgent(ctx, args[1:])
+		case "calibrate":
+			return runCalibrate(ctx, args[1:])
 		case "install":
 			return runInstall(ctx, args[1:])
 		case "record-test":
@@ -89,6 +92,10 @@ func runProcess(ctx context.Context, args []string) error {
 	}
 	if fs.NArg() > 0 {
 		return fmt.Errorf("unexpected argument %q", fs.Arg(0))
+	}
+	if isClassFolder(video) {
+		logf := func(format string, a ...any) { fmt.Fprintf(os.Stderr, format+"\n", a...) }
+		return processClassUntil(ctx, video, *stopAfter, logf)
 	}
 
 	if *out == "" {

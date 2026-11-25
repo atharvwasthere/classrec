@@ -227,6 +227,17 @@ func (r *Recorder) AppAudioLive() bool {
 	return level.DB > r.cfg.SilenceDB
 }
 
+// SkippedFrames is how many frames OBS has dropped from the recording so far in this piece.
+func (r *Recorder) SkippedFrames(ctx context.Context) (int, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.alive() {
+		return 0, errors.New("obs is not connected")
+	}
+	stats, err := r.client.Stats(ctx)
+	return stats.OutputSkippedFrames, err
+}
+
 // startPiece sets OBS up and starts a recording. Only StartRecord failing, or OBS not reporting
 // a recording a few seconds later, is an error.
 func (r *Recorder) startPiece(ctx context.Context) error {

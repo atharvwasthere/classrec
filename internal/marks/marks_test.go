@@ -7,6 +7,21 @@ import (
 	"time"
 )
 
+// Promise: a mark lands at the right second of the joined recording, even when OBS restarted mid-class.
+func TestToSecondsAcrossPieces(t *testing.T) {
+	start := time.Date(2026, 11, 25, 14, 0, 0, 0, time.UTC)
+	at := func(sec int) time.Time { return start.Add(time.Duration(sec) * time.Second) }
+	starts := []time.Time{at(0), at(620)} // piece 1 lasts 600 s, OBS restarts, piece 2 from 620 s
+	durations := []float64{600, 900}
+	got := ToSeconds([]time.Time{at(-5), at(100), at(610), at(700), at(5000)}, starts, durations)
+	want := []float64{0, 100, 600, 680, 1500} // before, in piece 1, in the gap, in piece 2, after
+	for i := range want {
+		if got[i] != want[i] {
+			t.Fatalf("got %v, want %v", got, want)
+		}
+	}
+}
+
 func TestAppendTimeKeepsWallClockTimes(t *testing.T) {
 	path := filepath.Join(t.TempDir(), "class", "marks.json")
 	ist := time.FixedZone("IST", 5*3600+1800)

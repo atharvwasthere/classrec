@@ -7,6 +7,7 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
+	"math"
 	"os"
 	"time"
 
@@ -46,8 +47,34 @@ func ReadTimes(path string) ([]time.Time, error) {
 	return times, nil
 }
 
-// AppendTime adds the moment t to path, creating it if missing. Like Append it leaves a file it
-// cannot read untouched.
+// ToSeconds places wall-clock marks on the timeline of pieces joined end to end, where piece i
+// starts at starts[i] and lasts durations[i] seconds. A mark between pieces, while OBS was
+// restarting, goes to the start of the next piece; one before the first piece goes to 0, and one
+// after the last piece to the end.
+func ToSeconds(times, starts []time.Time, durations []float64) []float64 {
+	out := make([]float64, 0, len(times))
+	for _, t := range times {
+		sec, offset := 0.0, 0.0
+		for i, start := range starts {
+			into := t.Sub(start).Seconds()
+			if into < 0 { // in the gap before this piece
+				sec = offset
+				break
+			}
+			if into <= durations[i] {
+				sec = offset + into
+				break
+			}
+			sec = offset + durations[i] // after this piece: at its end, unless a later piece holds it
+			offset += durations[i]
+		}
+		out = append(out, math.Round(sec*10)/10)
+	}
+	return out
+}
+
+// AppendTime adds the moment t to path, creating it if missing. It leaves a file it cannot read
+// untouched.
 func AppendTime(path string, t time.Time) error {
 	times, err := ReadTimes(path)
 	if err != nil && !errors.Is(err, fs.ErrNotExist) {

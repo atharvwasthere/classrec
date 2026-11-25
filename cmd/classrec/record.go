@@ -5,12 +5,15 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"runtime"
 	"strings"
 	"time"
 
 	"classrec/internal/desktop"
 	"classrec/internal/detect"
+	"classrec/internal/marks"
 	"classrec/internal/obs"
+	"classrec/internal/overlay"
 	"classrec/internal/recorder"
 )
 
@@ -23,34 +26,53 @@ type recordOptions struct {
 	OBSURL   string
 }
 
-// runRecordLoop watches for classes and records them with OBS until ctx ends.
+// agent is the record loop's state: it watches for classes and records them with OBS.
+type agent struct {
+	opts    recordOptions
+	rec     *recorder.Recorder
+	machine *detect.Machine
+	log     *agentLog
+	pill    *overlay.Overlay // nil if the overlay could not start
+	warn    *warnings        // nil between classes
+	level   overlay.Level
+}
+
+// runRecordLoop records classes until ctx ends.
 func runRecordLoop(ctx context.Context, opts recordOptions) error {
-	logf, closeLog, err := openAgentLog()
+	// Keep-awake is a per-thread setting in Windows, so this loop keeps one thread.
+	runtime.LockOSThread()
+	if err := desktop.SingleInstance("classrec-agent"); err != nil {
+		return err
+	}
+	log, err := openAgentLog()
 	if err != nil {
 		return err
 	}
-	defer closeLog()
-
-	rec, err := newRecorder(opts.Root, opts.OBSURL, logf)
+	defer log.close()
+	rec, err := newRecorder(opts.Root, opts.OBSURL, log.printf)
 	if err != nil {
 		return err
 	}
-	logf("agent started: mode %s (%s), recordings in %s", opts.Mode.Mode, opts.Mode.Source, opts.Root)
+	a := &agent{opts: opts, rec: rec, machine: detect.NewMachine(detect.DefaultConfig), log: log}
+	a.pill, err = overlay.New(overlay.Config{SettingsPath: settingsPath(), OnMark: a.mark})
+	if err != nil {
+		log.printf("no overlay: %v", err)
+	}
+	log.printf("agent started: mode %s (%s), recordings in %s, silence below %.0f dB", opts.Mode.Mode, opts.Mode.Source, opts.Root, silenceDB())
 	if moved, still := rec.RetryPending(ctx); moved+still > 0 {
-		logf("files left in staging by an earlier run: %d filed, %d still stuck", moved, still)
+		log.printf("files left in staging by an earlier run: %d filed, %d still stuck", moved, still)
 	}
 
-	machine := detect.NewMachine(detect.DefaultConfig)
 	tick := time.NewTicker(opts.Interval)
 	defer tick.Stop()
 	for {
-		step(ctx, machine, rec, opts, logf)
+		a.step(ctx)
 		select {
 		case <-ctx.Done():
 			if rec.Recording() {
-				logf("agent stopping during a class; stopping the recording")
+				log.printf("agent stopping during a class; stopping the recording")
 				stopCtx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
-				endClass(stopCtx, rec, opts, logf)
+				a.endClass(stopCtx)
 				cancel()
 			}
 			return nil
@@ -60,51 +82,121 @@ func runRecordLoop(ctx context.Context, opts recordOptions) error {
 }
 
 // step takes one look at the desktop and acts on it.
-func step(ctx context.Context, machine *detect.Machine, rec *recorder.Recorder, opts recordOptions, logf func(string, ...any)) {
+func (a *agent) step(ctx context.Context) {
 	sample := desktop.Snapshot(time.Now())
-	if rec.Recording() {
-		sample.AppAudioLive = rec.AppAudioLive()
+	if a.rec.Recording() {
+		sample.AppAudioLive = a.rec.AppAudioLive()
 	}
-	event := machine.Step(sample.Time, detect.Classify(sample))
-
+	event := a.machine.Step(sample.Time, detect.Classify(sample))
 	switch {
 	case event != nil && event.Kind == detect.Stop:
-		endClass(ctx, rec, opts, logf)
+		a.endClass(ctx)
 	case event != nil && event.Kind == detect.Start:
-		logf("class detected: %s %q", event.App, event.Title)
-		beginClass(ctx, rec, targetFor(event.App, event.Title, sample), logf)
-	case rec.Recording():
-		if err := rec.Tick(ctx); err != nil {
-			logf("could not keep the recording going: %v", err)
+		a.log.printf("class detected: %s %q", event.App, event.Title)
+		a.beginClass(ctx, targetFor(event.App, event.Title, sample))
+	case a.rec.Recording():
+		if err := a.rec.Tick(ctx); err != nil {
+			a.log.printf("could not keep the recording going: %v", err)
 		}
-	case machine.Phase() == detect.Recording || machine.Phase() == detect.Ending:
-		// the class is on but a start failed earlier: try again
-		app, title := machine.Class()
-		beginClass(ctx, rec, targetFor(app, title, sample), logf)
+		a.updatePill(ctx, sample)
+	case a.machine.Phase() == detect.Recording || a.machine.Phase() == detect.Ending:
+		app, title := a.machine.Class() // the class is on but a start failed earlier: try again
+		a.beginClass(ctx, targetFor(app, title, sample))
 	}
 }
 
-func beginClass(ctx context.Context, rec *recorder.Recorder, target recorder.Target, logf func(string, ...any)) {
-	if err := rec.Begin(ctx, target); err != nil {
-		logf("could not start recording: %v", err)
+func (a *agent) beginClass(ctx context.Context, target recorder.Target) {
+	a.log.startClass(classFile(a.opts.Root, "class.log"))
+	parkLeftover(classFile(a.opts.Root, "marks.json"))
+	if err := a.rec.Begin(ctx, target); err != nil {
+		a.log.printf("could not start recording: %v", err)
 		return
 	}
-	logf("recording started")
+	a.log.printf("recording started; mode %s", a.opts.Mode.Mode)
+	desktop.KeepAwake(true)
+	a.warn, a.level = newWarnings(time.Now()), overlay.Normal
+	if a.pill != nil {
+		a.pill.SetStatus(overlay.Normal, "")
+		a.pill.Show()
+	}
 }
 
-func endClass(ctx context.Context, rec *recorder.Recorder, opts recordOptions, logf func(string, ...any)) {
-	if !rec.Recording() {
+func (a *agent) endClass(ctx context.Context) {
+	if !a.rec.Recording() {
 		return
 	}
-	class, err := rec.End(ctx)
+	if a.pill != nil {
+		a.pill.Hide()
+	}
+	desktop.KeepAwake(false)
+	a.warn = nil
+	class, err := a.rec.End(ctx)
 	if err != nil {
-		logf("problem ending the class: %v", err)
+		a.log.printf("problem ending the class: %v", err)
 	}
-	logf("class filed in %s: %d file(s), %d left in staging; mode %s", class.Dir, len(class.Files), class.Pending, opts.Mode.Mode)
+	a.log.printf("class filed in %s: %d file(s), %d left in staging; mode %s", class.Dir, len(class.Files), class.Pending, a.opts.Mode.Mode)
+	a.log.endClass()
+	if class.Dir != "" {
+		for _, name := range []string{"marks.json", "class.log"} {
+			moveIfPresent(classFile(a.opts.Root, name), filepath.Join(class.Dir, name), a.log.printf)
+		}
+	}
+	afterClass(ctx, a.opts.Mode.Mode, class, a.log.printf, processClass)
 }
 
-// newRecorder builds the recorder the agent and record-test share: OBS at url, with its password
-// from the .obs-password file next to classrec.
+// updatePill shows what needs her attention, and logs each change.
+func (a *agent) updatePill(ctx context.Context, sample detect.Sample) {
+	if a.warn == nil {
+		return
+	}
+	skipped, _ := a.rec.SkippedFrames(ctx) // unknown counts as none; the recorder logs connection trouble
+	level, text, dropped := a.warn.update(classSignals{
+		now: sample.Time, audible: sample.AppAudioLive, onBattery: desktop.OnBattery(), skippedFrames: skipped,
+	})
+	if dropped {
+		a.log.printf("obs dropped frames: %d so far in this piece", skipped)
+	}
+	if level != a.level {
+		a.log.printf("pill: %v %s", level, text)
+		a.level = level
+	}
+	if a.pill != nil {
+		a.pill.SetStatus(level, text)
+	}
+}
+
+// mark records "I didn't get this" at the current moment. It runs on the overlay's thread.
+func (a *agent) mark() error {
+	return marks.AppendTime(classFile(a.opts.Root, "marks.json"), time.Now())
+}
+
+// classFile is where a file of the class in progress lives until the class is filed.
+func classFile(root, name string) string { return filepath.Join(root, "_staging", name) }
+
+// parkLeftover renames a file an interrupted class left behind, so the new class starts clean.
+func parkLeftover(path string) {
+	if _, err := os.Stat(path); err == nil {
+		ext := filepath.Ext(path)
+		_ = os.Rename(path, strings.TrimSuffix(path, ext)+time.Now().Format(" 2006-01-02 15-04-05")+ext)
+	}
+}
+
+// moveIfPresent moves src to dst unless dst exists; it never overwrites.
+func moveIfPresent(src, dst string, logf func(string, ...any)) {
+	if _, err := os.Stat(src); err != nil {
+		return
+	}
+	if _, err := os.Stat(dst); err == nil {
+		logf("not moving %s: %s exists", src, dst)
+		return
+	}
+	if err := os.Rename(src, dst); err != nil {
+		logf("could not move %s: %v", src, err)
+	}
+}
+
+// newRecorder builds the recorder the agent, record-test and selftest share: OBS at url, with
+// its password from the .obs-password file next to classrec.
 func newRecorder(root, url string, logf func(string, ...any)) (*recorder.Recorder, error) {
 	password, err := readOBSPassword()
 	if err != nil {
@@ -116,6 +208,7 @@ func newRecorder(root, url string, logf func(string, ...any)) (*recorder.Recorde
 		Dial:       func(ctx context.Context) (*obs.Client, error) { return obs.Connect(ctx, url, password) },
 		OBSRunning: recorder.OBSRunning,
 		LaunchOBS:  recorder.LauncherFor(recorder.DefaultOBSBin),
+		SilenceDB:  silenceDB(),
 		Log:        logf,
 	}), nil
 }
@@ -144,22 +237,4 @@ func readOBSPassword() (string, error) {
 // obsProfilesDir is where OBS keeps its profiles.
 func obsProfilesDir() string {
 	return filepath.Join(os.Getenv("APPDATA"), "obs-studio", "basic", "profiles")
-}
-
-// openAgentLog returns a logger that writes to stderr and to logs\agent-<date>.log next to classrec.
-func openAgentLog() (logf func(string, ...any), closeLog func(), err error) {
-	dir := filepath.Join(exeDir(), "logs")
-	if err := os.MkdirAll(dir, 0o755); err != nil {
-		return nil, nil, err
-	}
-	f, err := os.OpenFile(filepath.Join(dir, "agent-"+time.Now().Format("2006-01-02")+".log"), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
-	if err != nil {
-		return nil, nil, err
-	}
-	logf = func(format string, a ...any) {
-		line := time.Now().Format("2006-01-02 15:04:05 ") + fmt.Sprintf(format, a...) + "\n"
-		fmt.Fprint(os.Stderr, line)
-		_, _ = f.WriteString(line)
-	}
-	return logf, func() { f.Close() }, nil
 }

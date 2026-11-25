@@ -19,6 +19,16 @@ const (
 	Red
 )
 
+func (l Level) String() string {
+	switch l {
+	case Amber:
+		return "amber"
+	case Red:
+		return "red"
+	}
+	return "green"
+}
+
 // Config wires the overlay to its surroundings.
 type Config struct {
 	SettingsPath string       // where the dragged position is remembered

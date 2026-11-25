@@ -86,12 +86,37 @@ func Probe(ctx context.Context, path string) (float64, error) {
 	return d, nil
 }
 
-// ExtractAudio writes mono opus 32 kbps. It writes to a temp file and renames, so a crash never leaves a half file.
+// ExtractAudio writes mono opus 32 kbps, loudness-normalised so a quiet class transcribes as well
+// as a loud one. It writes to a temp file and renames, so a crash never leaves a half file.
 func ExtractAudio(ctx context.Context, in, out string) error {
 	tmp := out + ".part"
 	defer os.Remove(tmp)
 	if _, _, err := run(ctx, "ffmpeg", "-y", "-v", "error", "-i", in, "-vn", "-ac", "1",
-		"-c:a", "libopus", "-b:a", "32k", "-f", "ogg", tmp); err != nil {
+		"-af", "loudnorm=I=-16:TP=-1.5:LRA=11", "-c:a", "libopus", "-b:a", "32k", "-f", "ogg", tmp); err != nil {
+		return err
+	}
+	return os.Rename(tmp, out)
+}
+
+// Concat joins recordings that share codecs, in order, into out without re-encoding.
+func Concat(ctx context.Context, parts []string, out string) error {
+	list := out + ".txt"
+	var lines strings.Builder
+	for _, p := range parts {
+		abs, err := filepath.Abs(p)
+		if err != nil {
+			return err
+		}
+		quoted := strings.ReplaceAll(filepath.ToSlash(abs), "'", `'\''`) // ffmpeg's concat list quoting
+		fmt.Fprintf(&lines, "file '%s'\n", quoted)
+	}
+	if err := os.WriteFile(list, []byte(lines.String()), 0o644); err != nil {
+		return err
+	}
+	defer os.Remove(list)
+	tmp := out + ".part" + filepath.Ext(out)
+	defer os.Remove(tmp)
+	if _, _, err := run(ctx, "ffmpeg", "-y", "-v", "error", "-f", "concat", "-safe", "0", "-i", list, "-c", "copy", tmp); err != nil {
 		return err
 	}
 	return os.Rename(tmp, out)
