@@ -48,76 +48,79 @@ func (m MicUse) InUse() bool {
 	return everUsed && notStopped
 }
 
-// The two class apps.
+// App is a class app.
+type App string
+
+// The class apps.
 const (
-	Zoom = "Zoom"
-	Meet = "Meet"
+	Zoom App = "Zoom"
+	Meet App = "Meet"
 )
 
-const (
-	zoomExeName = "zoom.exe"
-	edgeExeName = "msedge.exe"
+// AppSpec is everything classrec knows about one class app.
+type AppSpec struct {
+	App         App
+	Exe         string            // file name of its exe, matched ignoring case
+	WindowClass string            // window class of its meeting window, for OBS's window capture
+	Matches     func(Window) bool // whether a window of Exe is a meeting
+	SceneName   string            // the OBS scene the agent records it with
+}
 
-	// UNVERIFIED: the Zoom meeting window's class and title come from Zoom 5.x/6.x reports,
-	// to be checked against a real --debug-detect log.
-	zoomMeetingClass = "ConfMultiTabContentWndClass"
-	zoomMeetingTitle = "Zoom Meeting"
-	meetTitleWord    = "Meet"
-)
+// UNVERIFIED: the Zoom meeting window's class and title come from Zoom 5.x/6.x reports,
+// to be checked against a real --debug-detect log.
+const zoomMeetingClass = "ConfMultiTabContentWndClass"
 
-// Observation is what one Sample says about Zoom and Meet.
+// Apps lists the class apps. When two show a meeting the first wins; she attends one class at a time.
+var Apps = []AppSpec{
+	{
+		App: Zoom, Exe: "Zoom.exe", WindowClass: zoomMeetingClass, SceneName: "classrec - Zoom",
+		Matches: func(w Window) bool { return w.Class == zoomMeetingClass || strings.Contains(w.Title, "Zoom Meeting") },
+	},
+	{
+		// Edge opens the mic for other sites too, so only the "Meet" title marks a class.
+		App: Meet, Exe: "msedge.exe", WindowClass: "Chrome_WidgetWin_1", SceneName: "classrec - Meet",
+		Matches: func(w Window) bool { return hasWord(w.Title, "Meet") },
+	},
+}
+
+// SpecFor returns the spec of app; ok is false for an unknown app.
+func SpecFor(app App) (spec AppSpec, ok bool) {
+	for _, s := range Apps {
+		if s.App == app {
+			return s, true
+		}
+	}
+	return AppSpec{}, false
+}
+
+// Observation is what one Sample says about the class apps.
 type Observation struct {
-	ZoomWindow string // title of a Zoom meeting window, "" if none
-	MeetWindow string // title of an Edge window showing Meet, "" if none
-	ZoomMic    bool
-	EdgeMic    bool
-	AppAudio   bool // the class app's audio is audible in OBS
+	Meeting  map[App]string // title of each app's meeting window, if it shows one
+	Mic      map[App]bool   // apps holding the mic open
+	AppAudio bool           // the recorded app's audio is audible in OBS
 }
 
 // Classify reduces a Sample to the signals the state machine uses.
 func Classify(s Sample) Observation {
-	o := Observation{AppAudio: s.AppAudioLive}
-	for _, w := range s.Windows {
-		if o.ZoomWindow == "" && isZoomMeetingWindow(w) {
-			o.ZoomWindow = w.Title
+	o := Observation{Meeting: map[App]string{}, Mic: map[App]bool{}, AppAudio: s.AppAudioLive}
+	for _, spec := range Apps {
+		for _, w := range s.Windows {
+			if isExe(w.Exe, `\/`, spec.Exe) && spec.Matches(w) {
+				o.Meeting[spec.App] = w.Title
+				break
+			}
 		}
-		if o.MeetWindow == "" && isMeetWindow(w) {
-			o.MeetWindow = w.Title
-		}
-	}
-	for _, m := range s.Mic {
-		if isMicInUseBy(m, zoomExeName) {
-			o.ZoomMic = true
-		}
-		if isMicInUseBy(m, edgeExeName) {
-			o.EdgeMic = true
+		for _, m := range s.Mic {
+			if m.InUse() && isExe(m.Path, "#", spec.Exe) {
+				o.Mic[spec.App] = true
+			}
 		}
 	}
 	return o
 }
 
-func isZoomMeetingWindow(w Window) bool {
-	if !isExe(w.Exe, `\/`, zoomExeName) {
-		return false
-	}
-	hasMeetingClass := w.Class == zoomMeetingClass
-	hasMeetingTitle := strings.Contains(w.Title, zoomMeetingTitle)
-	return hasMeetingClass || hasMeetingTitle
-}
-
-func isMeetWindow(w Window) bool {
-	if !isExe(w.Exe, `\/`, edgeExeName) {
-		return false
-	}
-	return hasWord(w.Title, meetTitleWord)
-}
-
-func isMicInUseBy(m MicUse, exe string) bool {
-	if !m.InUse() {
-		return false
-	}
-	return isExe(m.Path, "#", exe)
-}
+// InClass reports whether any class app shows a meeting window.
+func (o Observation) InClass() bool { return len(o.Meeting) > 0 }
 
 // isExe reports whether path ends in the file name exe, ignoring case. separators are the path separators path uses.
 func isExe(path, separators, exe string) bool {
@@ -183,17 +186,9 @@ const (
 type Event struct {
 	Kind  EventKind `json:"kind"`
 	At    time.Time `json:"at"`
-	App   string    `json:"app"` // Zoom or Meet
+	App   App       `json:"app"`
 	Title string    `json:"title"`
 }
-
-// classSignal is a meeting window that can start a class.
-type classSignal struct {
-	App   string
-	Title string
-}
-
-func (s classSignal) present() bool { return s.App != "" }
 
 // Machine is the detection state machine. The zero value is Idle.
 //
@@ -204,7 +199,7 @@ type Machine struct {
 	Cfg   Config
 	Phase Phase
 	Since time.Time // when Candidate or Ending began
-	App   string
+	App   App
 	Title string
 }
 
@@ -223,20 +218,19 @@ func (m *Machine) Step(t time.Time, o Observation) *Event {
 }
 
 func (m *Machine) stepIdle(t time.Time, o Observation) *Event {
-	signal := startSignal(o)
-	if !signal.present() {
+	app, title, found := startSignal(o)
+	if !found {
 		return nil
 	}
 	m.Phase = Candidate
 	m.Since = t
-	m.App = signal.App
-	m.Title = signal.Title
+	m.App = app
+	m.Title = title
 	return nil
 }
 
 func (m *Machine) stepCandidate(t time.Time, o Observation) *Event {
-	signal := startSignal(o)
-	if !signal.present() {
+	if _, _, found := startSignal(o); !found {
 		m.reset()
 		return nil
 	}
@@ -286,24 +280,18 @@ func (m *Machine) reset() {
 // mic, or its audio is audible in OBS. Any one is enough, so a closed window with the teacher still
 // talking keeps the recording, and so does a muted mic.
 func (m *Machine) classStillOn(o Observation) bool {
-	if o.AppAudio {
-		return true
-	}
-	if m.App == Zoom {
-		return o.ZoomWindow != "" || o.ZoomMic
-	}
-	return o.MeetWindow != "" || o.EdgeMic
+	return o.AppAudio || o.Meeting[m.App] != "" || o.Mic[m.App]
 }
 
-// startSignal prefers Zoom when both are open; she attends one class at a time.
-func startSignal(o Observation) classSignal {
-	if o.ZoomWindow != "" {
-		return classSignal{App: Zoom, Title: o.ZoomWindow}
+// startSignal is the first app, in Apps order, showing a meeting window. Only a window starts a
+// class: Edge opens the mic for other sites too.
+func startSignal(o Observation) (app App, title string, found bool) {
+	for _, spec := range Apps {
+		if title := o.Meeting[spec.App]; title != "" {
+			return spec.App, title, true
+		}
 	}
-	if o.MeetWindow != "" {
-		return classSignal{App: Meet, Title: o.MeetWindow}
-	}
-	return classSignal{}
+	return "", "", false
 }
 
 // Replay runs a fresh machine over samples and returns the events it produced.

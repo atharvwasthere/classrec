@@ -18,22 +18,34 @@ const (
 	meetName = "Meet - xyz-abcd-efg - Personal - Microsoft Edge"
 )
 
+// seen builds an Observation from the meeting windows by app and the apps holding the mic.
+func seen(meeting map[App]string, mic ...App) Observation {
+	o := Observation{Meeting: map[App]string{}, Mic: map[App]bool{}}
+	for app, title := range meeting {
+		o.Meeting[app] = title
+	}
+	for _, app := range mic {
+		o.Mic[app] = true
+	}
+	return o
+}
+
 func TestClassify(t *testing.T) {
 	tests := []struct {
 		name string
 		s    Sample
 		want Observation
 	}{
-		{"meet tab", Sample{Windows: []Window{{Exe: edgeExe, Title: meetName}}}, Observation{MeetWindow: meetName}},
-		{"meeting is not meet", Sample{Windows: []Window{{Exe: edgeExe, Title: "Meeting notes - Microsoft Edge"}}}, Observation{}},
-		{"meet in another browser", Sample{Windows: []Window{{Exe: `C:\chrome.exe`, Title: meetName}}}, Observation{}},
-		{"zoom meeting by class", Sample{Windows: []Window{{Exe: zoomExe, Class: "ConfMultiTabContentWndClass", Title: "Zoom"}}}, Observation{ZoomWindow: "Zoom"}},
-		{"zoom home is not a meeting", Sample{Windows: []Window{{Exe: zoomExe, Class: "ZPPTMainFrmWndClassEx", Title: "Zoom Workplace"}}}, Observation{}},
-		{"mic open", Sample{Mic: []MicUse{{Path: zoomMic, Start: 5}, {Path: edgeMic, Start: 5}}}, Observation{ZoomMic: true, EdgeMic: true}},
-		{"mic closed", Sample{Mic: []MicUse{{Path: zoomMic, Start: 5, Stop: 6}, {Path: edgeMic}}}, Observation{}},
+		{"meet tab", Sample{Windows: []Window{{Exe: edgeExe, Title: meetName}}}, seen(map[App]string{Meet: meetName})},
+		{"meeting is not meet", Sample{Windows: []Window{{Exe: edgeExe, Title: "Meeting notes - Microsoft Edge"}}}, seen(nil)},
+		{"meet in another browser", Sample{Windows: []Window{{Exe: `C:\chrome.exe`, Title: meetName}}}, seen(nil)},
+		{"zoom meeting by class", Sample{Windows: []Window{{Exe: zoomExe, Class: "ConfMultiTabContentWndClass", Title: "Zoom"}}}, seen(map[App]string{Zoom: "Zoom"})},
+		{"zoom home is not a meeting", Sample{Windows: []Window{{Exe: zoomExe, Class: "ZPPTMainFrmWndClassEx", Title: "Zoom Workplace"}}}, seen(nil)},
+		{"mic open", Sample{Mic: []MicUse{{Path: zoomMic, Start: 5}, {Path: edgeMic, Start: 5}}}, seen(nil, Zoom, Meet)},
+		{"mic closed", Sample{Mic: []MicUse{{Path: zoomMic, Start: 5, Stop: 6}, {Path: edgeMic}}}, seen(nil)},
 	}
 	for _, tt := range tests {
-		if got := Classify(tt.s); got != tt.want {
+		if got := Classify(tt.s); !reflect.DeepEqual(got, tt.want) {
 			t.Errorf("%s: got %+v, want %+v", tt.name, got, tt.want)
 		}
 	}
@@ -65,28 +77,30 @@ func run(steps ...step) []Event {
 func at(sec int) time.Time { return t0.Add(time.Duration(sec) * time.Second) }
 
 func TestMachine(t *testing.T) {
-	meet := Observation{MeetWindow: "Meet", EdgeMic: true}
-	zoom := Observation{ZoomWindow: "Zoom Meeting", ZoomMic: true}
-	none := Observation{}
+	meet := seen(map[App]string{Meet: "Meet"}, Meet)
+	zoom := seen(map[App]string{Zoom: "Zoom Meeting"}, Zoom)
+	none := seen(nil)
+	audio := seen(nil)
+	audio.AppAudio = true
 	tests := []struct {
 		name  string
 		steps []step
 		want  []Event
 	}{
 		{"blip shorter than hold", []step{{1, meet}, {30, none}}, nil},
-		{"edge mic alone never starts", []step{{60, Observation{EdgeMic: true}}}, nil},
-		{"zoom muted keeps recording", []step{{2, zoom}, {100, Observation{ZoomWindow: "Zoom Meeting"}}, {31, none}},
+		{"edge mic alone never starts", []step{{60, seen(nil, Meet)}}, nil},
+		{"zoom muted keeps recording", []step{{2, zoom}, {100, seen(map[App]string{Zoom: "Zoom Meeting"})}, {31, none}},
 			[]Event{{"start", at(10), Zoom, "Zoom Meeting"}, {"stop", at(1320), Zoom, "Zoom Meeting"}}},
 		{"rejoin within grace is one class", []step{{10, meet}, {17, none}, {10, meet}, {31, none}},
 			[]Event{{"start", at(10), Meet, "Meet"}, {"stop", at(670), Meet, "Meet"}}},
 		{"rejoin after grace is two classes", []step{{10, meet}, {31, none}, {10, meet}, {31, none}},
 			[]Event{{"start", at(10), Meet, "Meet"}, {"stop", at(400), Meet, "Meet"}, {"start", at(420), Meet, "Meet"}, {"stop", at(810), Meet, "Meet"}}},
-		{"edge mic does not sustain a zoom class", []step{{10, zoom}, {31, Observation{EdgeMic: true}}},
+		{"edge mic does not sustain a zoom class", []step{{10, zoom}, {31, seen(nil, Meet)}},
 			[]Event{{"start", at(10), Zoom, "Zoom Meeting"}, {"stop", at(400), Zoom, "Zoom Meeting"}}},
-		{"audio alone does not start a class", []step{{60, Observation{AppAudio: true}}}, nil},
-		{"audio keeps a class whose window is gone and mic is off", []step{{10, meet}, {60, Observation{AppAudio: true}}, {31, none}},
+		{"audio alone does not start a class", []step{{60, audio}}, nil},
+		{"audio keeps a class whose window is gone and mic is off", []step{{10, meet}, {60, audio}, {31, none}},
 			[]Event{{"start", at(10), Meet, "Meet"}, {"stop", at(1000), Meet, "Meet"}}},
-		{"audio blip inside the grace restarts it", []step{{10, meet}, {20, none}, {1, Observation{AppAudio: true}}, {31, none}},
+		{"audio blip inside the grace restarts it", []step{{10, meet}, {20, none}, {1, audio}, {31, none}},
 			[]Event{{"start", at(10), Meet, "Meet"}, {"stop", at(610), Meet, "Meet"}}},
 	}
 	for _, tt := range tests {

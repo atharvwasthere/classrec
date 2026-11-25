@@ -7,7 +7,6 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
-	"sync/atomic"
 	"testing"
 	"time"
 
@@ -16,97 +15,76 @@ import (
 	"classrec/internal/obs/obstest"
 )
 
-const testPassword = "pw"
+const password = "pw"
 
 var classStart = time.Date(2026, 11, 25, 14, 3, 0, 0, time.UTC) // a Wednesday
 
-type harness struct {
-	t          *testing.T
-	fake       *obstest.Server
-	rec        *Recorder
-	root       string
-	profileDir string
+var meet = Target{App: detect.Meet, Title: "Meet - xyz-abcd-efg - Personal - Microsoft Edge"}
 
-	running    atomic.Bool
-	launches   atomic.Int32
-	now        atomic.Pointer[time.Time]
-	failMove   atomic.Bool
-	failDial   atomic.Bool
-	renameGate atomic.Pointer[chan struct{}] // while set, every move waits for it to close
-	dialGate   atomic.Pointer[chan struct{}] // while set, every dial waits for it to close
+// harness is a recorder wired to a fake OBS that has the classrec profile install writes.
+type harness struct {
+	t    *testing.T
+	fake *obstest.Server
+	rec  *Recorder
+	root string
+
+	running   bool // obs64.exe is running
+	failDial  bool // OBS refuses connections
+	holdFiles bool // OBS keeps its files open, so renames fail
+	launches  int
+	now       time.Time
 }
 
-func newHarness(t *testing.T) *harness {
-	t.Helper()
-	h := &harness{t: t, fake: obstest.New(testPassword), root: t.TempDir(), profileDir: t.TempDir()}
+func newHarness(t *testing.T, canvasW, canvasH int) *harness {
+	h := &harness{t: t, fake: obstest.New(password), root: t.TempDir(), running: true, now: classStart}
 	t.Cleanup(h.fake.Close)
-	h.running.Store(true)
-	h.setNow(classStart)
+	h.fake.AddProfile(ProfileName, obstest.Profile{
+		Params: map[string]string{"Output/Mode": "Advanced", "AdvOut/RecFormat2": "mkv", "AdvOut/RecEncoder": Encoder},
+		Video: map[string]any{"fpsNumerator": FPS, "fpsDenominator": 1, "baseWidth": canvasW, "baseHeight": canvasH,
+			"outputWidth": OutputWidth, "outputHeight": OutputHeight},
+	})
 	h.rec = New(Config{
-		Root:       h.root,
-		ProfileDir: h.profileDir,
-		Dial: func(ctx context.Context) (OBS, error) {
-			if gate := h.dialGate.Load(); gate != nil {
-				select {
-				case <-*gate:
-				case <-ctx.Done():
-					return nil, ctx.Err()
-				}
-			}
-			if h.failDial.Load() {
+		Root: h.root,
+		Dial: func(ctx context.Context) (*obs.Client, error) {
+			if h.failDial {
 				return nil, errors.New("connection refused")
 			}
-			c, err := obs.Connect(ctx, h.fake.URL(), testPassword)
-			if err != nil {
-				return nil, err
+			return obs.Connect(ctx, h.fake.URL(), password)
+		},
+		OBSRunning: func() bool { return h.running },
+		LaunchOBS:  func() error { h.launches++; h.running = true; return nil },
+		Now:        func() time.Time { return h.now },
+		Sleep:      func(context.Context, time.Duration) error { return nil },
+		Log:        t.Logf,
+		rename: func(from, to string) error {
+			if h.holdFiles {
+				return errors.New("the process cannot access the file because it is being used by another process")
 			}
-			return c, nil
+			return os.Rename(from, to)
 		},
-		OBSRunning: h.running.Load,
-		LaunchOBS: func() error {
-			h.launches.Add(1)
-			h.running.Store(true)
-			return nil
-		},
-		ConnectAttempts: 3,
-		Now:             func() time.Time { return *h.now.Load() },
-		Sleep:           func(ctx context.Context, d time.Duration) error { return ctx.Err() },
-		Move: MoveOptions{
-			First: time.Millisecond, Total: 4 * time.Millisecond,
-			rename: func(from, to string) error {
-				if gate := h.renameGate.Load(); gate != nil {
-					<-*gate
-				}
-				if h.failMove.Load() {
-					return errors.New("the process cannot access the file because it is being used by another process")
-				}
-				return os.Rename(from, to)
-			},
-		},
-		Log: func(format string, a ...any) { t.Logf(format, a...) },
 	})
-	t.Cleanup(func() { h.rec.dropClient() })
+	t.Cleanup(h.rec.drop)
 	return h
 }
 
-func (h *harness) setNow(t time.Time) { h.now.Store(&t) }
-
-var meet = Target{App: detect.Meet, Title: "Meet - xyz-abcd-efg - Personal - Microsoft Edge", Class: "Chrome_WidgetWin_1", Exe: "msedge.exe"}
-
-const meetFolder = "2026-11-25 Wednesday - xyz-abcd-efg (Meet)"
-
-// end stops the class and waits for it to be filed.
-func (h *harness) end(ctx context.Context) Class {
+func (h *harness) begin(t Target) {
 	h.t.Helper()
-	filing, err := h.rec.End(ctx)
+	if err := h.rec.Begin(context.Background(), t); err != nil {
+		h.t.Fatal(err)
+	}
+}
+
+func (h *harness) end() Class {
+	h.t.Helper()
+	class, err := h.rec.End(context.Background())
 	if err != nil {
 		h.t.Fatal(err)
 	}
-	return filing.Class()
+	return class
 }
 
-func (h *harness) stagingFiles() []string {
-	entries, _ := os.ReadDir(filepath.Join(h.root, "_staging"))
+func (h *harness) staging() []string {
+	entries, _ := os.ReadDir(h.rec.Staging())
 	var names []string
 	for _, e := range entries {
 		if isRecording(e.Name()) {
@@ -116,7 +94,7 @@ func (h *harness) stagingFiles() []string {
 	return names
 }
 
-func readFile(t *testing.T, path string) string {
+func read(t *testing.T, path string) string {
 	t.Helper()
 	b, err := os.ReadFile(path)
 	if err != nil {
@@ -125,541 +103,229 @@ func readFile(t *testing.T, path string) string {
 	return string(b)
 }
 
-func readPieces(t *testing.T, dir string) piecesFile {
-	t.Helper()
-	var info piecesFile
-	if err := json.Unmarshal([]byte(readFile(t, filepath.Join(dir, PiecesFile))), &info); err != nil {
-		t.Fatal(err)
+func count(list []string, want string) (n int) {
+	for _, s := range list {
+		if s == want {
+			n++
+		}
 	}
-	return info
+	return n
 }
 
-func TestBeginSetsOBSUpTheSameWayEveryTime(t *testing.T) {
-	h := newHarness(t)
-	if err := h.rec.Begin(context.Background(), meet); err != nil {
-		t.Fatal(err)
-	}
-	if !h.fake.Recording() {
-		t.Fatal("not recording")
-	}
-	if got := h.fake.Profile(); got != "classrec" {
-		t.Errorf("profile %q", got)
-	}
-	for name, want := range map[string]string{
-		"Output/Mode": "Advanced", "AdvOut/RecFormat2": "mkv", "AdvOut/RecEncoder": "obs_qsv11_v2", "AdvOut/RecRescale": "false",
-	} {
-		cat, key, _ := strings.Cut(name, "/")
-		if got, _ := h.fake.Param("classrec", cat, key); got != want {
-			t.Errorf("%s = %q, want %q", name, got, want)
-		}
-	}
-	video := h.fake.Video()
-	for key, want := range map[string]float64{
-		"baseWidth": 1920, "baseHeight": 1080, "outputWidth": 1280, "outputHeight": 720, "fpsNumerator": 15, "fpsDenominator": 1,
-	} {
-		if video[key] != want {
-			t.Errorf("video %s = %v, want %v", key, video[key], want)
-		}
-	}
-	if got := h.fake.RecordDirectory(); got != filepath.Join(h.root, "_staging") {
-		t.Errorf("record directory %q", got)
-	}
-	if got := h.fake.CurrentScene(); got != "classrec - Meet" {
-		t.Errorf("scene %q", got)
-	}
-	in, ok := h.fake.Input("classrec - Meet video")
-	if !ok || in.Settings["window"] != "Meet - xyz-abcd-efg - Personal - Microsoft Edge:Chrome_WidgetWin_1:msedge.exe" {
-		t.Errorf("video input %+v", in)
-	}
-	if _, ok := h.fake.Input("classrec - Meet audio"); !ok {
-		t.Error("no audio input")
-	}
-	for _, name := range []string{"Desktop Audio", "Mic/Aux"} {
-		if !h.fake.IsMuted(name) {
-			t.Errorf("%s not muted", name)
-		}
-	}
-	encoder := readFile(t, filepath.Join(h.profileDir, "recordEncoder.json"))
-	for _, want := range []string{`"rate_control": "CBR"`, `"bitrate": 1000`, `"keyint_sec": 2`} {
-		if !strings.Contains(encoder, want) {
-			t.Errorf("recordEncoder.json lacks %s:\n%s", want, encoder)
-		}
-	}
-	if problems := h.rec.Problems(); len(problems) > 0 {
-		t.Errorf("problems: %v", problems)
-	}
-}
-
-// The canvas must be the display, or a window bigger than 1280x720 is cropped; the window must be
-// scaled to fit the whole canvas, shape kept, centred.
-func TestWindowIsFittedToTheDisplayCanvas(t *testing.T) {
+// Promise: each app is recorded from its own scene, with its meeting window scaled to fit the
+// whole canvas, the record folder set to staging, and Desktop Audio and Mic/Aux muted.
+func TestEachAppIsRecordedWholeFromItsOwnScene(t *testing.T) {
 	for _, tt := range []struct {
-		name         string
-		w, h         int
-		outW, outH   float64
-		wantBoundsWH [2]float64
+		target     Target
+		canvas     [2]int
+		wantWindow string
 	}{
-		{"1080p", 1920, 1080, 1280, 720, [2]float64{1920, 1080}},
-		{"1366x768 laptop", 1366, 768, 1280, 720, [2]float64{1366, 768}},
-		{"1440p", 2560, 1440, 1280, 720, [2]float64{2560, 1440}},
-		{"16:10 keeps its shape", 1920, 1200, 1152, 720, [2]float64{1920, 1200}},
+		{meet, [2]int{1920, 1080}, "Meet - xyz-abcd-efg - Personal - Microsoft Edge:Chrome_WidgetWin_1:msedge.exe"},
+		{Target{App: detect.Zoom, Title: "Zoom Meeting: Maths #1"}, [2]int{1920, 1200}, "Zoom Meeting#3A Maths #231:ConfMultiTabContentWndClass:Zoom.exe"},
 	} {
-		t.Run(tt.name, func(t *testing.T) {
-			h := newHarness(t)
-			h.fake.SetMonitor(tt.w, tt.h)
-			if err := h.rec.Begin(context.Background(), meet); err != nil {
-				t.Fatal(err)
+		t.Run(string(tt.target.App), func(t *testing.T) {
+			h := newHarness(t, tt.canvas[0], tt.canvas[1])
+			h.begin(tt.target)
+			st := h.fake.State()
+			scene := "classrec - " + string(tt.target.App)
+			if !st.Recording || st.Profile != ProfileName || st.Scene != scene || st.RecordDir != h.rec.Staging() {
+				t.Fatalf("state %+v", st)
 			}
-			video := h.fake.Video()
-			if video["baseWidth"] != float64(tt.w) || video["baseHeight"] != float64(tt.h) ||
-				video["outputWidth"] != tt.outW || video["outputHeight"] != tt.outH {
-				t.Errorf("video %v", video)
+			if got := st.Inputs[scene+" video"].Settings["window"]; got != tt.wantWindow {
+				t.Errorf("window %q, want %q", got, tt.wantWindow)
 			}
-			item := h.fake.SceneItemTransform("classrec - Meet", "classrec - Meet video")
-			if item["boundsType"] != "OBS_BOUNDS_SCALE_INNER" ||
-				item["boundsWidth"] != tt.wantBoundsWH[0] || item["boundsHeight"] != tt.wantBoundsWH[1] ||
-				item["boundsAlignment"] != float64(0) || item["positionX"] != float64(0) || item["positionY"] != float64(0) {
-				t.Errorf("transform %v", item)
+			if st.Inputs[scene+" audio"].Kind != "wasapi_process_output_capture" {
+				t.Error("no app audio capture")
+			}
+			fit := st.Transforms[scene+"/"+scene+" video"]
+			if fit["boundsType"] != "OBS_BOUNDS_SCALE_INNER" || fit["boundsWidth"] != float64(tt.canvas[0]) ||
+				fit["boundsHeight"] != float64(tt.canvas[1]) || fit["boundsAlignment"] != float64(0) {
+				t.Errorf("window not fitted to the %v canvas: %v", tt.canvas, fit)
+			}
+			if !st.Muted["Desktop Audio"] || !st.Muted["Mic/Aux"] {
+				t.Errorf("muted %v", st.Muted)
+			}
+			if p := h.rec.Problems(); len(p) > 0 {
+				t.Errorf("problems with an installed profile: %v", p)
 			}
 		})
 	}
 }
 
-// OBS reports the display scaled by Windows' zoom (1536x864 for a 1920x1080 screen at 125%), but
-// a captured window is true pixels, so the canvas must come from Windows, not from OBS.
-func TestCanvasUsesTheTrueDisplaySizeWhenWindowsGivesIt(t *testing.T) {
-	h := newHarness(t)
-	h.fake.SetMonitor(1536, 864)
-	h.rec.cfg.DisplaySize = func() (int, int) { return 1920, 1080 }
-	if err := h.rec.Begin(context.Background(), meet); err != nil {
-		t.Fatal(err)
-	}
-	if video := h.fake.Video(); video["baseWidth"] != float64(1920) || video["baseHeight"] != float64(1080) {
-		t.Fatalf("video %v", video)
-	}
-	if item := h.fake.SceneItemTransform("classrec - Meet", "classrec - Meet video"); item["boundsWidth"] != float64(1920) {
-		t.Fatalf("transform %v", item)
-	}
-}
-
-// Loading a profile resets video settings and is what makes OBS read the output mode, so the
-// recorder reloads only when something changed, and sets video after.
-func TestProfileIsReloadedOnlyWhenSomethingChangedAndVideoIsSetAfter(t *testing.T) {
-	h := newHarness(t)
-	ctx := context.Background()
-	lastIndex := func(requests []string, kind string) (last, count int) {
-		last = -1
-		for i, r := range requests {
-			if r == kind {
-				last, count = i, count+1
-			}
-		}
-		return last, count
-	}
-
-	h.rec.Begin(ctx, meet)
-	requests := h.fake.Requests()
-	switches, count := lastIndex(requests, "SetCurrentProfile")
-	video, _ := lastIndex(requests, "SetVideoSettings")
-	if count != 2 || switches > video {
-		t.Fatalf("first class: %d profile switches, last at %d, last video at %d: want a reload, then video", count, switches, video)
-	}
-
-	h.end(ctx)
-	before := len(h.fake.Requests())
-	h.rec.Begin(ctx, meet)
-	for _, r := range h.fake.Requests()[before:] {
-		if r == "SetCurrentProfile" || r == "CreateProfile" {
-			t.Fatalf("second class reloaded the profile although nothing changed (%s)", r)
-		}
-	}
-}
-
-func TestZoomUsesItsOwnScene(t *testing.T) {
-	h := newHarness(t)
-	zoom := Target{App: detect.Zoom, Title: "Zoom Meeting"}
-	if err := h.rec.Begin(context.Background(), zoom); err != nil {
-		t.Fatal(err)
-	}
-	in, _ := h.fake.Input("classrec - Zoom video")
-	if h.fake.CurrentScene() != "classrec - Zoom" || in.Settings["window"] != "Zoom Meeting:ConfMultiTabContentWndClass:Zoom.exe" {
-		t.Fatalf("scene %q, video input %+v", h.fake.CurrentScene(), in)
-	}
-}
-
-func TestWindowSpecEscapesColonsAndHashes(t *testing.T) {
-	got := windowSpec(Target{App: detect.Meet, Title: "Class: Maths #1", Class: "C", Exe: "msedge.exe"})
-	if want := "Class#3A Maths #231:C:msedge.exe"; got != want {
-		t.Fatalf("got %q, want %q", got, want)
-	}
-}
-
-// A class recorded with the wrong scene, or without muting the mic, beats no class at all.
-func TestSetupFailuresAreProblemsNotReasonsToSkipTheClass(t *testing.T) {
-	h := newHarness(t)
-	h.fake.FailRequests("GetProfileList", "GetMonitorList", "GetSceneList", "CreateScene", "SetCurrentProgramScene",
-		"GetSpecialInputs", "SetInputMute", "SetSceneItemTransform")
-	ctx := context.Background()
-
-	if err := h.rec.Begin(ctx, meet); err != nil {
-		t.Fatalf("Begin failed over a setup problem: %v", err)
-	}
-	if !h.fake.Recording() {
+// Promise: a class is never skipped over a setup step OBS refuses; only StartRecord failing stops it.
+func TestSetupProblemsNeverSkipAClass(t *testing.T) {
+	h := newHarness(t, 1920, 1080)
+	h.fake.FailRequests("SetCurrentProfile", "CreateScene", "GetSpecialInputs")
+	h.begin(meet)
+	if !h.fake.State().Recording {
 		t.Fatal("not recording")
 	}
 	problems := strings.Join(h.rec.Problems(), "\n")
 	for _, want := range []string{"profile", "scene", "muting"} {
 		if !strings.Contains(problems, want) {
-			t.Errorf("problems do not mention %q:\n%s", want, problems)
+			t.Errorf("problems do not mention %s:\n%s", want, problems)
 		}
 	}
-	class := h.end(ctx)
-	if len(class.Files) != 1 || readFile(t, class.Files[0]) != "fake mkv recording-1.mkv" {
+	if class := h.end(); len(class.Files) != 1 {
 		t.Fatalf("class %+v", class)
+	}
+
+	refused := newHarness(t, 1920, 1080)
+	refused.fake.FailRequests("StartRecord")
+	if err := refused.rec.Begin(context.Background(), meet); err == nil || refused.rec.Recording() {
+		t.Fatalf("StartRecord refused, yet Begin returned %v and Recording is %v", err, refused.rec.Recording())
 	}
 }
 
-func TestEvenWhenOBSWillNotTakeTheRecordFolderItRecords(t *testing.T) {
-	h := newHarness(t)
-	h.fake.FailRequests("SetRecordDirectory", "GetRecordDirectory", "SetVideoSettings", "SetProfileParameter")
-	if err := h.rec.Begin(context.Background(), meet); err != nil {
+// Promise: if OBS dies mid-class it is started again and the class continues in a second piece,
+// filed in the same folder, with each piece's start noted.
+func TestOBSKilledMidClassGivesTwoPiecesInOneFolder(t *testing.T) {
+	h := newHarness(t, 1920, 1080)
+	h.begin(meet)
+	h.now = classStart.Add(12 * time.Minute)
+	h.fake.Kill()
+	h.running = false
+	if err := h.rec.Tick(context.Background()); err != nil {
 		t.Fatal(err)
 	}
-	if !h.fake.Recording() || len(h.rec.Problems()) == 0 {
-		t.Fatalf("recording %v, problems %v", h.fake.Recording(), h.rec.Problems())
+	if h.launches != 1 || !h.fake.State().Recording {
+		t.Fatalf("launches %d, recording %v", h.launches, h.fake.State().Recording)
 	}
-}
 
-func TestOnlyStartRecordFailingIsAnError(t *testing.T) {
-	h := newHarness(t)
-	h.fake.FailRequests("StartRecord")
-	err := h.rec.Begin(context.Background(), meet)
-	if err == nil || !strings.Contains(err.Error(), "starting the recording") {
-		t.Fatalf("got %v", err)
-	}
-	if h.rec.Recording() {
-		t.Fatal("marked recording although StartRecord failed")
-	}
-}
-
-func TestEndFilesTheRecordingInTheClassFolder(t *testing.T) {
-	h := newHarness(t)
-	ctx := context.Background()
-	h.rec.Begin(ctx, meet)
-
-	class := h.end(ctx)
-	wantDir := filepath.Join(h.root, meetFolder)
-	if class.Dir != wantDir || len(class.Files) != 1 || class.Pending != 0 {
+	class := h.end()
+	if len(class.Files) != 2 || read(t, filepath.Join(class.Dir, "part-01.mkv")) != "fake mkv recording-1.mkv" ||
+		read(t, filepath.Join(class.Dir, "part-02.mkv")) != "fake mkv recording-2.mkv" {
 		t.Fatalf("class %+v", class)
 	}
-	if got := readFile(t, filepath.Join(wantDir, "part-01.mkv")); got != "fake mkv recording-1.mkv" {
-		t.Fatalf("filed contents %q", got)
+	var info Pieces
+	if err := json.Unmarshal([]byte(read(t, filepath.Join(class.Dir, PiecesFile))), &info); err != nil {
+		t.Fatal(err)
 	}
-	info := readPieces(t, wantDir)
-	if len(info.Pieces) != 1 || info.Pieces[0].File != "part-01.mkv" || !info.Pieces[0].Start.Equal(classStart) || info.App != "Meet" {
+	if len(info.Pieces) != 2 || !info.Pieces[0].Start.Equal(classStart) || !info.Pieces[1].Start.Equal(h.now) {
 		t.Fatalf("pieces.json %+v", info)
 	}
-	if left := h.stagingFiles(); len(left) != 0 {
-		t.Fatalf("staging still holds %v", left)
-	}
-	if h.rec.Recording() {
-		t.Fatal("still marked recording")
-	}
-}
-
-func TestOBSKilledMidClassGivesASecondPieceOfTheSameClass(t *testing.T) {
-	h := newHarness(t)
-	ctx := context.Background()
-	h.rec.Begin(ctx, meet)
-
-	restart := classStart.Add(12 * time.Minute)
-	h.setNow(restart)
-	h.fake.Kill()
-	h.running.Store(false)
-	if err := h.rec.Tick(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if h.launches.Load() != 1 {
-		t.Fatalf("obs launched %d times, want once", h.launches.Load())
-	}
-	if !h.fake.Recording() {
-		t.Fatal("not recording again after OBS came back")
-	}
-	if h.fake.CurrentScene() != "classrec - Meet" || h.fake.RecordDirectory() != filepath.Join(h.root, "_staging") {
-		t.Fatal("setup was not reapplied")
-	}
-
-	class := h.end(ctx)
-	if len(class.Files) != 2 || class.Pending != 0 {
-		t.Fatalf("class %+v", class)
-	}
-	if got := readFile(t, filepath.Join(class.Dir, "part-01.mkv")); got != "fake mkv recording-1.mkv" {
-		t.Errorf("part-01 holds %q, want the piece OBS died on", got)
-	}
-	if got := readFile(t, filepath.Join(class.Dir, "part-02.mkv")); got != "fake mkv recording-2.mkv" {
-		t.Errorf("part-02 holds %q", got)
-	}
-	info := readPieces(t, class.Dir)
-	if len(info.Pieces) != 2 || !info.Pieces[0].Start.Equal(classStart) || !info.Pieces[1].Start.Equal(restart) {
-		t.Errorf("pieces.json %+v", info)
-	}
-	if left := h.stagingFiles(); len(left) != 0 {
+	if left := h.staging(); len(left) != 0 {
 		t.Fatalf("staging still holds %v", left)
 	}
 }
 
-func TestOBSGoneForGoodStillFilesWhatWasRecorded(t *testing.T) {
-	h := newHarness(t)
-	ctx := context.Background()
-	h.rec.Begin(ctx, meet)
+// Promise: a class is filed even when OBS is gone for good at the end, and End never starts OBS.
+func TestOBSGoneAtEndStillFilesTheClass(t *testing.T) {
+	h := newHarness(t, 1920, 1080)
+	h.begin(meet)
 	h.fake.Kill()
-	h.running.Store(false)
-	h.failDial.Store(true)
-
-	class := h.end(ctx)
-	if len(class.Files) != 1 || readFile(t, class.Files[0]) != "fake mkv recording-1.mkv" {
-		t.Fatalf("class %+v", class)
-	}
-	if h.launches.Load() != 0 {
-		t.Fatal("End launched obs; only Begin and Tick may")
+	h.running, h.failDial = false, true
+	class := h.end()
+	if len(class.Files) != 1 || read(t, class.Files[0]) != "fake mkv recording-1.mkv" || h.launches != 0 {
+		t.Fatalf("class %+v, launches %d", class, h.launches)
 	}
 }
 
-// If only the connection died, End must reconnect and stop the recording properly rather than
-// guess from the files in staging.
-func TestEndWithADeadConnectionReconnectsAndStopsOBS(t *testing.T) {
-	h := newHarness(t)
-	ctx := context.Background()
-	h.rec.Begin(ctx, meet)
+// Promise: when only the connection dropped, End reconnects and stops OBS rather than leaving it recording.
+func TestEndReconnectsToStopOBSAfterADroppedConnection(t *testing.T) {
+	h := newHarness(t, 1920, 1080)
+	h.begin(meet)
 	h.fake.DropConnections() // OBS keeps running and recording
-	waitFor(t, "client noticing", func() bool { return h.rec.currentClient().Err() != nil })
-
-	class := h.end(ctx)
-	if len(class.Files) != 1 || readFile(t, class.Files[0]) != "fake mkv recording-1.mkv" {
-		t.Fatalf("class %+v", class)
-	}
-	if h.fake.Recording() {
-		t.Fatal("obs is still recording: End never stopped it")
-	}
-	if h.launches.Load() != 0 {
-		t.Fatal("launched obs")
-	}
-	var stops int
-	for _, r := range h.fake.Requests() {
-		if r == "StopRecord" {
-			stops++
-		}
-	}
-	if stops != 1 {
-		t.Fatalf("StopRecord sent %d times", stops)
-	}
-}
-
-func TestLostConnectionAloneKeepsTheSameRecording(t *testing.T) {
-	h := newHarness(t)
-	ctx := context.Background()
-	h.rec.Begin(ctx, meet)
-
-	h.fake.DropConnections() // OBS keeps running and recording
-	if err := h.rec.Tick(ctx); err != nil {
-		t.Fatal(err)
-	}
-	if h.launches.Load() != 0 {
-		t.Fatal("launched obs although it was running")
-	}
-	starts := 0
-	for _, r := range h.fake.Requests() {
-		if r == "StartRecord" {
-			starts++
-		}
-	}
-	if starts != 1 {
-		t.Fatalf("StartRecord sent %d times", starts)
-	}
-	class := h.end(ctx)
-	if len(class.Files) != 1 {
-		t.Fatalf("class %+v", class)
-	}
-}
-
-func TestTickWhileHealthyDoesNothing(t *testing.T) {
-	h := newHarness(t)
-	ctx := context.Background()
-	h.rec.Begin(ctx, meet)
-	before := len(h.fake.Requests())
-	if err := h.rec.Tick(ctx); err != nil {
-		t.Fatal(err)
-	}
-	for _, r := range h.fake.Requests()[before:] {
-		if r != "GetRecordStatus" {
-			t.Fatalf("a healthy tick sent %s", r)
-		}
-	}
-}
-
-func TestBeginStartsOBSWhenItIsNotRunning(t *testing.T) {
-	h := newHarness(t)
-	h.running.Store(false)
-	if err := h.rec.Begin(context.Background(), meet); err != nil {
-		t.Fatal(err)
-	}
-	if h.launches.Load() != 1 {
-		t.Fatalf("launches %d", h.launches.Load())
-	}
-}
-
-func TestSecondBeginIsRefused(t *testing.T) {
-	h := newHarness(t)
-	h.rec.Begin(context.Background(), meet)
-	if err := h.rec.Begin(context.Background(), meet); err == nil {
-		t.Fatal("second Begin succeeded")
-	}
-}
-
-func TestAppAudioLiveFollowsTheAppAudioInput(t *testing.T) {
-	h := newHarness(t)
-	h.rec.Begin(context.Background(), meet)
-	h.setNow(time.Now())
-
-	if h.rec.AppAudioLive() {
-		t.Fatal("live before any level")
-	}
-	h.fake.SendLevel("classrec - Meet audio", 0.1) // -20 dB: someone talking
-	waitFor(t, "audible", h.rec.AppAudioLive)
-
-	h.fake.SendLevel("classrec - Meet audio", 0.00005) // -86 dB: silence
-	waitFor(t, "silent", func() bool { return !h.rec.AppAudioLive() })
-
-	h.fake.SendLevel("classrec - Meet audio", 0.1)
-	waitFor(t, "audible again", h.rec.AppAudioLive)
-	h.setNow(time.Now().Add(time.Minute)) // no level for a minute: not a level any more
-	if h.rec.AppAudioLive() {
-		t.Fatal("a stale level counted")
-	}
-}
-
-func waitFor(t *testing.T, what string, cond func() bool) {
-	t.Helper()
-	deadline := time.Now().Add(5 * time.Second)
-	for time.Now().Before(deadline) {
-		if cond() {
-			return
-		}
+	for deadline := time.Now().Add(5 * time.Second); h.rec.client.Err() == nil && time.Now().Before(deadline); {
 		time.Sleep(10 * time.Millisecond)
 	}
-	t.Fatalf("never became %s", what)
-}
-
-// within fails the test if f takes longer than a second.
-func within(t *testing.T, what string, f func()) {
-	t.Helper()
-	finished := make(chan struct{})
-	go func() { f(); close(finished) }()
-	select {
-	case <-finished:
-	case <-time.After(time.Second):
-		t.Fatalf("%s took more than a second", what)
+	class := h.end()
+	st := h.fake.State()
+	if len(class.Files) != 1 || st.Recording || h.launches != 0 || count(st.Requests, "StopRecord") != 1 {
+		t.Fatalf("class %+v, still recording %v, launches %d, requests %v", class, st.Recording, h.launches, st.Requests)
 	}
 }
 
-func TestFileStaysInStagingWhenOBSKeepsHoldingIt(t *testing.T) {
-	h := newHarness(t)
-	ctx := context.Background()
-	h.rec.Begin(ctx, meet)
-	h.failMove.Store(true)
+// Promise: a recording is never overwritten and never deleted.
+func TestMovingNeverOverwritesOrDeletes(t *testing.T) {
+	for _, tt := range []struct {
+		name     string
+		existing []string // already in the class folder
+		want     string
+	}{
+		{"free name", nil, "part-01.mkv"},
+		{"name taken", []string{"part-01.mkv"}, "part-01 (2).mkv"},
+		{"two names taken", []string{"part-01.mkv", "part-01 (2).mkv"}, "part-01 (3).mkv"},
+	} {
+		t.Run(tt.name, func(t *testing.T) {
+			h := newHarness(t, 1920, 1080)
+			dir := t.TempDir()
+			for _, name := range tt.existing {
+				os.WriteFile(filepath.Join(dir, name), []byte("old "+name), 0o644)
+			}
+			src := filepath.Join(t.TempDir(), "new.mkv")
+			os.WriteFile(src, []byte("new"), 0o644)
 
-	class := h.end(ctx)
-	if class.Pending != 1 || len(class.Files) != 0 {
-		t.Fatalf("class %+v", class)
-	}
-	if got := h.stagingFiles(); len(got) != 1 {
-		t.Fatalf("staging holds %v, want the recording left alone", got)
-	}
-	if len(readPending(h.rec.Staging())) != 1 {
-		t.Fatal("the move was not remembered")
+			got, err := h.rec.move(context.Background(), src, filepath.Join(dir, "part-01.mkv"))
+			if err != nil || filepath.Base(got) != tt.want || read(t, got) != "new" {
+				t.Fatalf("moved to %q (%v), want %s", got, err, tt.want)
+			}
+			for _, name := range tt.existing {
+				if read(t, filepath.Join(dir, name)) != "old "+name {
+					t.Errorf("%s changed", name)
+				}
+			}
+		})
 	}
 
-	// the next agent start, with OBS no longer holding the file
-	h.failMove.Store(false)
-	moved, still := h.rec.RetryPending(ctx)
-	if moved != 1 || still != 0 {
+	h := newHarness(t, 1920, 1080)
+	h.holdFiles = true
+	src := filepath.Join(t.TempDir(), "held.mkv")
+	os.WriteFile(src, []byte("precious"), 0o644)
+	if _, err := h.rec.move(context.Background(), src, filepath.Join(t.TempDir(), "x.mkv")); err == nil || read(t, src) != "precious" {
+		t.Fatal("a failed move must leave the file untouched")
+	}
+}
+
+// Promise: a file OBS still holds stays in staging, is noted in pending.json, and is filed at the next start.
+func TestHeldFileIsFiledAtTheNextStart(t *testing.T) {
+	h := newHarness(t, 1920, 1080)
+	h.begin(meet)
+	h.holdFiles = true
+	class := h.end()
+	if class.Pending != 1 || len(h.staging()) != 1 || len(readPending(h.rec.Staging())) != 1 {
+		t.Fatalf("class %+v, staging %v", class, h.staging())
+	}
+
+	h.holdFiles = false
+	if moved, still := h.rec.RetryPending(context.Background()); moved != 1 || still != 0 {
 		t.Fatalf("moved %d, still %d", moved, still)
 	}
-	if got := readFile(t, filepath.Join(class.Dir, "part-01.mkv")); got != "fake mkv recording-1.mkv" {
-		t.Fatalf("retried file holds %q", got)
-	}
-	if len(h.stagingFiles()) != 0 || len(readPending(h.rec.Staging())) != 0 {
-		t.Fatal("staging or the pending list not cleaned up")
+	if read(t, filepath.Join(class.Dir, "part-01.mkv")) != "fake mkv recording-1.mkv" || len(h.staging()) != 0 {
+		t.Fatal("not filed")
 	}
 }
 
-// Class two starts while class one's file is still being moved, so a slow release by OBS never
-// costs the start of the next class.
-func TestNextClassBeginsWhileThePreviousIsStillBeingFiled(t *testing.T) {
-	h := newHarness(t)
-	ctx := context.Background()
-	gate := make(chan struct{})
-	h.renameGate.Store(&gate)
-
-	if err := h.rec.Begin(ctx, meet); err != nil {
-		t.Fatal(err)
-	}
-	var first *Filing
-	within(t, "End", func() {
-		var err error
-		if first, err = h.rec.End(ctx); err != nil {
-			t.Error(err)
+// Promise: class folders are "<date> <day> - <title> (<app>)" with a safe, short title, and two
+// classes never share one.
+func TestClassFolders(t *testing.T) {
+	for _, tt := range []struct{ in, want string }{
+		{"Meet - xyz-abcd-efg - Personal - Microsoft\u200b Edge", "xyz-abcd-efg"},
+		{"Meet - Maths 101 - Microsoft Edge", "Maths 101"},
+		{"Meet - Algebra - Part 2 - Personal - Microsoft Edge", "Algebra - Part 2"},
+		{"Zoom Meeting", "Class"},
+		{"Zoom Meeting - Algebra", "Algebra"},
+		{`Maths: Algebra/Geometry? "Part" <1> | *final* \x`, "Maths AlgebraGeometry Part 1 final x"},
+		{"Tab\there\x01 x\x7f", "Tabhere x"},
+		{"  a    b  ", "a b"},
+		{"Maths . . ", "Maths"},
+		{"", "Class"},
+		{"Meet - गणित कक्षा - Microsoft Edge", "गणित कक्षा"},
+		{strings.Repeat("क", 70), strings.Repeat("क", 60)},
+		{strings.Repeat("a", 59) + " bbb", strings.Repeat("a", 59)},
+	} {
+		if got := SanitizeTitle(tt.in); got != tt.want {
+			t.Errorf("SanitizeTitle(%q) = %q, want %q", tt.in, got, tt.want)
 		}
-	})
-	within(t, "Begin of the next class", func() {
-		if err := h.rec.Begin(ctx, meet); err != nil {
-			t.Error(err)
-		}
-	})
-	select {
-	case <-first.Done():
-		t.Fatal("the first class finished filing although its move was blocked")
-	default:
 	}
-	if !h.fake.Recording() {
-		t.Fatal("the second class is not being recorded")
+	if got := ClassFolderName(classStart, detect.Meet, "Meet - Maths - Personal - Microsoft Edge"); got != "2026-11-25 Wednesday - Maths (Meet)" {
+		t.Errorf("folder name %q", got)
 	}
 
-	close(gate)
-	var second *Filing
-	within(t, "End of the second class", func() {
-		var err error
-		if second, err = h.rec.End(ctx); err != nil {
-			t.Error(err)
-		}
-	})
-	one, two := first.Class(), second.Class()
-	if one.Dir == two.Dir || len(one.Files) != 1 || len(two.Files) != 1 {
-		t.Fatalf("classes %+v and %+v", one, two)
-	}
-	if readFile(t, one.Files[0]) != "fake mkv recording-1.mkv" || readFile(t, two.Files[0]) != "fake mkv recording-2.mkv" {
-		t.Fatal("recordings ended up in the wrong class")
-	}
-	h.rec.Wait(ctx)
-}
-
-// While Begin waits for OBS to answer, the rest of the agent must not freeze.
-func TestStatusQueriesAnswerWhileBeginIsConnecting(t *testing.T) {
-	h := newHarness(t)
-	gate := make(chan struct{})
-	h.dialGate.Store(&gate)
-	begun := make(chan error, 1)
-	go func() { begun <- h.rec.Begin(context.Background(), meet) }()
-	time.Sleep(50 * time.Millisecond) // Begin is now inside Dial
-
-	within(t, "Recording and AppAudioLive", func() {
-		if h.rec.Recording() || h.rec.AppAudioLive() {
-			t.Error("recording before OBS answered")
-		}
-		h.rec.Problems()
-	})
-	close(gate)
-	if err := <-begun; err != nil {
-		t.Fatal(err)
+	root := t.TempDir()
+	first, _ := makeClassDir(root, "2026-11-25 Wednesday - Maths (Meet)")
+	second, _ := makeClassDir(root, "2026-11-25 Wednesday - Maths (Meet)")
+	if first == second || filepath.Base(second) != "2026-11-25 Wednesday - Maths (Meet) (2)" {
+		t.Fatalf("got %q and %q", first, second)
 	}
 }

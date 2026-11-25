@@ -4,6 +4,8 @@ import (
 	"context"
 	"encoding/json"
 	"fmt"
+	"math"
+	"regexp"
 	"strconv"
 	"strings"
 )
@@ -103,6 +105,24 @@ func parseRate(s string) float64 {
 		return 0
 	}
 	return n / d
+}
+
+var meanVolumeRe = regexp.MustCompile(`mean_volume: (-?[\d.]+|-inf) dB`)
+
+// MeanVolume is the mean loudness of path's audio in dBFS; -Inf for digital silence.
+func MeanVolume(ctx context.Context, path string) (float64, error) {
+	_, stderr, err := run(ctx, "ffmpeg", "-hide_banner", "-nostats", "-i", path, "-vn", "-af", "volumedetect", "-f", "null", "-")
+	if err != nil {
+		return 0, err
+	}
+	m := meanVolumeRe.FindStringSubmatch(stderr)
+	if m == nil {
+		return 0, fmt.Errorf("no mean_volume in ffmpeg output (no audio stream?)")
+	}
+	if m[1] == "-inf" {
+		return math.Inf(-1), nil
+	}
+	return strconv.ParseFloat(m[1], 64)
 }
 
 // Frame writes the picture at second at of the video as a PNG.

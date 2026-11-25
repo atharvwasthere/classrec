@@ -47,11 +47,11 @@ func TestRecordStartStop(t *testing.T) {
 	if err != nil || path == "" {
 		t.Fatalf("path %q, err %v", path, err)
 	}
-	if fake.Recording() {
+	if fake.State().Recording {
 		t.Fatal("fake still recording")
 	}
 	want := []string{"StartRecord", "GetRecordStatus", "StopRecord"}
-	if got := fake.Requests(); !reflect.DeepEqual(got, want) {
+	if got := fake.State().Requests; !reflect.DeepEqual(got, want) {
 		t.Fatalf("requests %v, want %v", got, want)
 	}
 }
@@ -147,56 +147,6 @@ func TestReconnectAfterCrashSeesRecordingStillRunning(t *testing.T) {
 	status, err := second.RecordStatus(context.Background())
 	if err != nil || !status.Active {
 		t.Fatalf("status %+v, err %v", status, err)
-	}
-}
-
-func TestSceneSetup(t *testing.T) {
-	fake := newFake(t)
-	client, _ := connect(t, fake, password)
-	defer client.Close()
-	ctx := context.Background()
-
-	if err := client.CreateScene(ctx, "classrec - Meet"); err != nil {
-		t.Fatal(err)
-	}
-	settings := map[string]any{"window": "Meet:Chrome_WidgetWin_1:msedge.exe"}
-	if err := client.CreateInput(ctx, "classrec - Meet", "classrec - Meet video", "window_capture", settings); err != nil {
-		t.Fatal(err)
-	}
-	if err := client.SetInputSettings(ctx, "classrec - Meet video", map[string]any{"cursor": false}); err != nil {
-		t.Fatal(err)
-	}
-	if err := client.SetCurrentScene(ctx, "classrec - Meet"); err != nil {
-		t.Fatal(err)
-	}
-
-	scenes, _ := client.Scenes(ctx)
-	inputs, _ := client.Inputs(ctx)
-	if !reflect.DeepEqual(scenes, []string{"classrec - Meet"}) || !reflect.DeepEqual(inputs, []string{"classrec - Meet video"}) {
-		t.Fatalf("scenes %v, inputs %v", scenes, inputs)
-	}
-	if fake.CurrentScene() != "classrec - Meet" {
-		t.Fatalf("current scene %q", fake.CurrentScene())
-	}
-	in, _ := fake.Input("classrec - Meet video")
-	if in.Settings["window"] != "Meet:Chrome_WidgetWin_1:msedge.exe" || in.Settings["cursor"] != false {
-		t.Fatalf("settings %v: SetInputSettings must keep the old ones", in.Settings)
-	}
-}
-
-func TestSceneErrors(t *testing.T) {
-	fake := newFake(t)
-	client, _ := connect(t, fake, password)
-	defer client.Close()
-	ctx := context.Background()
-	client.CreateScene(ctx, "a")
-
-	var requestErr *obs.RequestError
-	if err := client.CreateScene(ctx, "a"); !errors.As(err, &requestErr) || requestErr.Code != 601 {
-		t.Fatalf("duplicate scene: %v", err)
-	}
-	if err := client.SetCurrentScene(ctx, "nope"); !errors.As(err, &requestErr) || requestErr.Code != 600 {
-		t.Fatalf("missing scene: %v", err)
 	}
 }
 

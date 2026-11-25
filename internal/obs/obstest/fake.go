@@ -14,18 +14,19 @@ import (
 	"strings"
 	"sync"
 
-	"classrec/internal/ws"
+	"classrec/internal/obs/ws"
 )
 
 const (
 	salt      = "lM1GncleQOaCu9lT1yeUZhFYnqhsLLP1G5lAGo3ixaI="
 	challenge = "+IxH4CnCiqpX1rM9scsNynZzbOe4KhDeYcTNS3PDaeY="
 
-	codeOutputRunning         = 500
-	codeOutputNotRunning      = 501
-	codeUnknownRequest        = 204
-	codeResourceNotFound      = 600
-	codeResourceAlreadyExists = 601
+	codeSuccess          = 100
+	codeUnknownRequest   = 204
+	codeOutputRunning    = 500
+	codeOutputNotRunning = 501
+	codeNotFound         = 600
+	codeExists           = 601
 )
 
 // Input is an input the fake holds, as created by CreateInput.
@@ -35,54 +36,48 @@ type Input struct {
 	Settings map[string]any
 }
 
-// Server is a fake OBS. Set Password to "" to run without authentication.
-type Server struct {
-	srv      *httptest.Server
-	Password string
-
-	mu            sync.Mutex
-	conns         []*ws.Conn
-	requests      []string // request types received, in order
-	recording     bool
-	recordings    int
-	renderSkipped int
-	outputSkipped int
-
-	recordDir     string
-	recordPath    string // file of the recording in progress
-	profiles      []string
-	profile       string
-	params        map[string]map[string]string // profile -> "category/name" -> value
-	video         map[string]any
-	muted         map[string]bool
-	specialInputs map[string]string
-
-	monitorW, monitorH int
-	failing            map[string]bool           // request types that always fail
-	itemIDs            map[string]int            // "scene/input" -> scene item id
-	transforms         map[string]map[string]any // "scene/input" -> scene item transform
-	nextItemID         int
-
-	scenes       map[string]bool
-	sceneOrder   []string
-	inputs       map[string]*Input
-	inputOrder   []string
-	currentScene string
+// Profile is a profile as `classrec install` would leave it.
+type Profile struct {
+	Params map[string]string // "category/name" -> value
+	Video  map[string]any    // GetVideoSettings fields
 }
 
-// New starts a fake OBS that requires password.
+// Server is a fake OBS.
+type Server struct {
+	srv      *httptest.Server
+	password string
+
+	mu         sync.Mutex
+	conns      []*ws.Conn
+	requests   []string // request types received, in order
+	failing    map[string]bool
+	recording  bool
+	recordings int
+	recordDir  string
+	recordPath string // file of the recording in progress
+
+	profiles  map[string]Profile
+	profile   string
+	muted     map[string]bool
+	scenes    map[string]bool
+	scene     string
+	inputs    map[string]*Input
+	itemIDs   map[string]int            // "scene/input" -> scene item id
+	transform map[string]map[string]any // "scene/input" -> transform
+	skipped   [2]int                    // render, output
+}
+
+// New starts a fake OBS that requires password; "" turns authentication off. It has one
+// profile, "Untitled", recording 1920x1080 at 30 fps in simple mode.
 func New(password string) *Server {
 	s := &Server{
-		Password: password, scenes: map[string]bool{}, inputs: map[string]*Input{},
-		profiles: []string{"Untitled"}, profile: "Untitled",
-		params:        map[string]map[string]string{"Untitled": {}},
-		video:         map[string]any{"fpsNumerator": 30, "fpsDenominator": 1, "baseWidth": 1920, "baseHeight": 1080, "outputWidth": 1920, "outputHeight": 1080},
-		muted:         map[string]bool{},
-		specialInputs: map[string]string{"desktop1": "Desktop Audio", "mic1": "Mic/Aux"},
-		monitorW:      1920, monitorH: 1080,
-		failing:    map[string]bool{},
-		itemIDs:    map[string]int{},
-		transforms: map[string]map[string]any{},
+		password: password,
+		failing:  map[string]bool{},
+		profiles: map[string]Profile{"Untitled": {Params: map[string]string{"Output/Mode": "Simple"},
+			Video: map[string]any{"fpsNumerator": 30, "fpsDenominator": 1, "baseWidth": 1920, "baseHeight": 1080, "outputWidth": 1920, "outputHeight": 1080}}},
+		profile: "Untitled",
+		muted:   map[string]bool{}, scenes: map[string]bool{}, inputs: map[string]*Input{},
+		itemIDs: map[string]int{}, transform: map[string]map[string]any{},
 	}
 	s.srv = httptest.NewServer(http.HandlerFunc(s.serve))
 	return s
@@ -97,36 +92,11 @@ func (s *Server) Close() {
 	s.srv.Close()
 }
 
-// DropConnections closes every open connection without a close frame, as when OBS crashes.
-// Recording state survives, so a test can also check a "relaunched" OBS.
-func (s *Server) DropConnections() {
+// AddProfile adds or replaces a profile, as if its files had been written while OBS was closed.
+func (s *Server) AddProfile(name string, p Profile) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	for _, conn := range s.conns {
-		conn.Abort()
-	}
-	s.conns = nil
-}
-
-// Requests returns the request types received so far.
-func (s *Server) Requests() []string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return append([]string(nil), s.requests...)
-}
-
-// Recording reports whether a recording is running.
-func (s *Server) Recording() bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.recording
-}
-
-// SetMonitor sets the size of the primary display GetMonitorList reports.
-func (s *Server) SetMonitor(width, height int) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	s.monitorW, s.monitorH = width, height
+	s.profiles[name] = p
 }
 
 // FailRequests makes every later request of these types fail, as when OBS refuses them.
@@ -138,19 +108,19 @@ func (s *Server) FailRequests(types ...string) {
 	}
 }
 
-// SceneItemTransform returns what was set on the input's scene item, nil if nothing was.
-func (s *Server) SceneItemTransform(scene, input string) map[string]any {
+// DropConnections closes every connection without a close frame, as when the network hiccups.
+// OBS keeps recording.
+func (s *Server) DropConnections() {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	out := map[string]any{}
-	for k, v := range s.transforms[scene+"/"+input] {
-		out[k] = v
+	for _, conn := range s.conns {
+		conn.Abort()
 	}
-	return out
+	s.conns = nil
 }
 
-// Kill imitates obs64.exe dying: every connection drops and the recording is lost,
-// but the file it was writing stays on disk.
+// Kill imitates obs64.exe dying: connections drop and the recording stops, but the file it was
+// writing stays on disk. A later connection is a relaunched OBS.
 func (s *Server) Kill() {
 	s.mu.Lock()
 	s.recording = false
@@ -158,75 +128,42 @@ func (s *Server) Kill() {
 	s.DropConnections()
 }
 
-// IsMuted reports whether the input is muted.
-func (s *Server) IsMuted(name string) bool {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.muted[name]
-}
-
-// Param is a profile.ini value of the named profile.
-func (s *Server) Param(profile, category, name string) (string, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	v, ok := s.params[profile][category+"/"+name]
-	return v, ok
-}
-
-// Profile is the current profile's name.
-func (s *Server) Profile() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.profile
-}
-
-// Video is the current video settings.
-func (s *Server) Video() map[string]any {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	out := map[string]any{}
-	for k, v := range s.video {
-		out[k] = v
-	}
-	return out
-}
-
-// RecordDirectory is the folder the fake records into.
-func (s *Server) RecordDirectory() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.recordDir
-}
-
-// CurrentScene is the scene OBS is set to record.
-func (s *Server) CurrentScene() string {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	return s.currentScene
-}
-
-// Input returns a copy of the named input's state.
-func (s *Server) Input(name string) (Input, bool) {
-	s.mu.Lock()
-	defer s.mu.Unlock()
-	in, ok := s.inputs[name]
-	if !ok {
-		return Input{}, false
-	}
-	copied := *in
-	copied.Settings = map[string]any{}
-	for k, v := range in.Settings {
-		copied.Settings[k] = v
-	}
-	return copied, true
-}
-
 // SetSkippedFrames sets the counters GetStats reports.
 func (s *Server) SetSkippedFrames(render, output int) {
 	s.mu.Lock()
 	defer s.mu.Unlock()
-	s.renderSkipped = render
-	s.outputSkipped = output
+	s.skipped = [2]int{render, output}
+}
+
+// State is a snapshot of what the fake has been told.
+type State struct {
+	Recording  bool
+	Profile    string
+	RecordDir  string
+	Scene      string
+	Inputs     map[string]Input
+	Muted      map[string]bool
+	Transforms map[string]map[string]any // "scene/input" -> transform
+	Requests   []string
+}
+
+// State returns a copy of the fake's state.
+func (s *Server) State() State {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	st := State{Recording: s.recording, Profile: s.profile, RecordDir: s.recordDir, Scene: s.scene,
+		Inputs: map[string]Input{}, Muted: map[string]bool{}, Transforms: map[string]map[string]any{},
+		Requests: append([]string(nil), s.requests...)}
+	for k, v := range s.inputs {
+		st.Inputs[k] = *v
+	}
+	for k, v := range s.muted {
+		st.Muted[k] = v
+	}
+	for k, v := range s.transform {
+		st.Transforms[k] = v
+	}
+	return st
 }
 
 // SendLevel pushes an InputVolumeMeters event giving input a mono level of mul (a linear multiplier).
@@ -234,12 +171,9 @@ func (s *Server) SendLevel(inputName string, mul float64) {
 	data := map[string]any{
 		"eventType":   "InputVolumeMeters",
 		"eventIntent": 1 << 16,
-		"eventData": map[string]any{
-			"inputs": []any{map[string]any{
-				"inputName":      inputName,
-				"inputLevelsMul": [][]float64{{mul, mul, mul}},
-			}},
-		},
+		"eventData": map[string]any{"inputs": []any{map[string]any{
+			"inputName": inputName, "inputLevelsMul": [][]float64{{mul, mul, mul}},
+		}}},
 	}
 	s.mu.Lock()
 	conns := append([]*ws.Conn(nil), s.conns...)
@@ -251,16 +185,12 @@ func (s *Server) SendLevel(inputName string, mul float64) {
 
 func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	conn, err := ws.Accept(w, r)
-	if err != nil {
-		return
-	}
-	if !s.handshake(conn) {
+	if err != nil || !s.handshake(conn) {
 		return
 	}
 	s.mu.Lock()
 	s.conns = append(s.conns, conn)
 	s.mu.Unlock()
-
 	for {
 		raw, err := conn.ReadMessage()
 		if err != nil {
@@ -284,11 +214,10 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 // handshake sends Hello, checks Identify, and answers Identified or closes with 4009.
 func (s *Server) handshake(conn *ws.Conn) bool {
 	helloData := map[string]any{"obsWebSocketVersion": "5.5.0", "rpcVersion": 1}
-	if s.Password != "" {
+	if s.password != "" {
 		helloData["authentication"] = map[string]string{"challenge": challenge, "salt": salt}
 	}
 	send(conn, 0, helloData)
-
 	raw, err := conn.ReadMessage()
 	if err != nil {
 		return false
@@ -303,7 +232,7 @@ func (s *Server) handshake(conn *ws.Conn) bool {
 		conn.CloseWithCode(4000, "expected identify")
 		return false
 	}
-	if s.Password != "" && identify.Data.Authentication != expectedAuth(s.Password) {
+	if s.password != "" && identify.Data.Authentication != expectedAuth(s.password) {
 		conn.CloseWithCode(4009, "Authentication failed.")
 		return false
 	}
@@ -311,225 +240,184 @@ func (s *Server) handshake(conn *ws.Conn) bool {
 	return true
 }
 
+// request is the data of any request classrec sends; each handler reads the fields it needs.
+type request struct {
+	Scene      string         `json:"sceneName"`
+	Source     string         `json:"sourceName"`
+	Input      string         `json:"inputName"`
+	Kind       string         `json:"inputKind"`
+	Settings   map[string]any `json:"inputSettings"`
+	Muted      bool           `json:"inputMuted"`
+	ItemID     int            `json:"sceneItemId"`
+	Transform  map[string]any `json:"sceneItemTransform"`
+	Profile    string         `json:"profileName"`
+	Category   string         `json:"parameterCategory"`
+	Name       string         `json:"parameterName"`
+	RecordDir  string         `json:"recordDirectory"`
+	unparsable bool
+}
+
+// reply is a handler's answer: a status code and optional response data.
+type reply struct {
+	code int
+	data map[string]any
+}
+
+func ok(data map[string]any) reply { return reply{codeSuccess, data} }
+
+var handlers = map[string]func(*Server, request) reply{
+	"StartRecord": (*Server).startRecord,
+	"StopRecord":  (*Server).stopRecord,
+	"GetRecordStatus": func(s *Server, _ request) reply {
+		return ok(map[string]any{"outputActive": s.recording, "outputDuration": 0})
+	},
+	"GetStats": func(s *Server, _ request) reply {
+		return ok(map[string]any{"renderSkippedFrames": s.skipped[0], "renderTotalFrames": 1000,
+			"outputSkippedFrames": s.skipped[1], "outputTotalFrames": 1000, "activeFps": 15.0, "cpuUsage": 7.0})
+	},
+	"GetRecordDirectory": func(s *Server, _ request) reply { return ok(map[string]any{"recordDirectory": s.recordDir}) },
+	"SetRecordDirectory": func(s *Server, q request) reply { s.recordDir = q.RecordDir; return ok(nil) },
+	"GetProfileList": func(s *Server, _ request) reply {
+		var names []string
+		for name := range s.profiles {
+			names = append(names, name)
+		}
+		return ok(map[string]any{"currentProfileName": s.profile, "profiles": names})
+	},
+	"SetCurrentProfile": func(s *Server, q request) reply {
+		if _, found := s.profiles[q.Profile]; !found {
+			return reply{codeNotFound, nil}
+		}
+		s.profile = q.Profile
+		return ok(nil)
+	},
+	"GetProfileParameter": func(s *Server, q request) reply {
+		value, set := s.profiles[s.profile].Params[q.Category+"/"+q.Name]
+		if !set {
+			return ok(map[string]any{"parameterValue": nil})
+		}
+		return ok(map[string]any{"parameterValue": value})
+	},
+	"GetVideoSettings": func(s *Server, _ request) reply { return ok(s.profiles[s.profile].Video) },
+	"GetSpecialInputs": func(*Server, request) reply {
+		return ok(map[string]any{"desktop1": "Desktop Audio", "mic1": "Mic/Aux"})
+	},
+	"SetInputMute":           func(s *Server, q request) reply { s.muted[q.Input] = q.Muted; return ok(nil) },
+	"CreateScene":            (*Server).createScene,
+	"CreateInput":            (*Server).createInput,
+	"SetInputSettings":       (*Server).setInputSettings,
+	"SetCurrentProgramScene": (*Server).setScene,
+	"GetSceneItemId":         (*Server).sceneItemID,
+	"SetSceneItemTransform":  (*Server).setTransform,
+}
+
 func (s *Server) answer(conn *ws.Conn, requestType, requestID string, requestData json.RawMessage) {
+	var q request
+	if len(requestData) > 0 && json.Unmarshal(requestData, &q) != nil {
+		q.unparsable = true
+	}
 	s.mu.Lock()
 	s.requests = append(s.requests, requestType)
-	ok, code, data := s.handleRequest(requestType, requestData)
+	handler, known := handlers[requestType]
+	var rep reply
+	switch {
+	case s.failing[requestType]:
+		rep = reply{codeNotFound, nil}
+	case !known || q.unparsable:
+		rep = reply{codeUnknownRequest, nil}
+	default:
+		rep = handler(s, q)
+	}
 	s.mu.Unlock()
 
 	response := map[string]any{
 		"requestType":   requestType,
 		"requestId":     requestID,
-		"requestStatus": map[string]any{"result": ok, "code": code},
+		"requestStatus": map[string]any{"result": rep.code == codeSuccess, "code": rep.code},
 	}
-	if data != nil {
-		response["responseData"] = data
+	if rep.data != nil {
+		response["responseData"] = rep.data
 	}
 	send(conn, 7, response)
 }
 
-// handleRequest runs one request against the fake's state; s.mu is held.
-func (s *Server) handleRequest(requestType string, requestData json.RawMessage) (ok bool, code int, data map[string]any) {
-	const success = 100
-	var in struct {
-		SceneName     string         `json:"sceneName"`
-		InputName     string         `json:"inputName"`
-		InputKind     string         `json:"inputKind"`
-		InputSettings map[string]any `json:"inputSettings"`
+func (s *Server) startRecord(request) reply {
+	if s.recording {
+		return reply{codeOutputRunning, nil}
 	}
-	json.Unmarshal(requestData, &in) // absent or odd data leaves the zero value, like a missing field
-	if s.failing[requestType] {
-		return false, codeResourceNotFound, nil
+	s.recording = true
+	s.recordings++
+	name := fmt.Sprintf("recording-%d.mkv", s.recordings)
+	s.recordPath = filepath.Join(s.recordDir, name)
+	if _, err := os.Stat(s.recordDir); s.recordDir != "" && err == nil {
+		_ = os.WriteFile(s.recordPath, []byte("fake mkv "+name), 0o644) // OBS creates the file as it starts
 	}
-	switch requestType {
-	case "GetMonitorList":
-		return true, success, map[string]any{"monitors": []any{map[string]any{
-			"monitorIndex": 0, "monitorName": "Fake display",
-			"monitorWidth": s.monitorW, "monitorHeight": s.monitorH,
-			"monitorPositionX": 0, "monitorPositionY": 0,
-		}}}
-	case "GetSceneItemId":
-		var q struct {
-			Scene  string `json:"sceneName"`
-			Source string `json:"sourceName"`
-		}
-		json.Unmarshal(requestData, &q)
-		id, ok := s.itemIDs[q.Scene+"/"+q.Source]
-		if !ok {
-			return false, codeResourceNotFound, nil
-		}
-		return true, success, map[string]any{"sceneItemId": id}
-	case "SetSceneItemTransform":
-		var q struct {
-			Scene     string         `json:"sceneName"`
-			ItemID    int            `json:"sceneItemId"`
-			Transform map[string]any `json:"sceneItemTransform"`
-		}
-		json.Unmarshal(requestData, &q)
-		for key, id := range s.itemIDs {
-			if id == q.ItemID && strings.HasPrefix(key, q.Scene+"/") {
-				if s.transforms[key] == nil {
-					s.transforms[key] = map[string]any{}
-				}
-				for k, v := range q.Transform {
-					s.transforms[key][k] = v
-				}
-				return true, success, nil
-			}
-		}
-		return false, codeResourceNotFound, nil
-	case "GetSceneList":
-		scenes := []any{}
-		for _, name := range s.sceneOrder {
-			scenes = append(scenes, map[string]any{"sceneName": name})
-		}
-		return true, success, map[string]any{"scenes": scenes, "currentProgramSceneName": s.currentScene}
-	case "GetInputList":
-		inputs := []any{}
-		for _, name := range s.inputOrder {
-			inputs = append(inputs, map[string]any{"inputName": name, "inputKind": s.inputs[name].Kind})
-		}
-		return true, success, map[string]any{"inputs": inputs}
-	case "CreateScene":
-		if _, exists := s.scenes[in.SceneName]; exists {
-			return false, codeResourceAlreadyExists, nil
-		}
-		s.scenes[in.SceneName] = true
-		s.sceneOrder = append(s.sceneOrder, in.SceneName)
-		return true, success, nil
-	case "CreateInput":
-		if !s.scenes[in.SceneName] {
-			return false, codeResourceNotFound, nil
-		}
-		if _, exists := s.inputs[in.InputName]; exists {
-			return false, codeResourceAlreadyExists, nil
-		}
-		s.inputs[in.InputName] = &Input{Scene: in.SceneName, Kind: in.InputKind, Settings: in.InputSettings}
-		s.inputOrder = append(s.inputOrder, in.InputName)
-		s.nextItemID++
-		s.itemIDs[in.SceneName+"/"+in.InputName] = s.nextItemID
-		return true, success, map[string]any{"sceneItemId": s.nextItemID}
-	case "SetInputSettings":
-		input, exists := s.inputs[in.InputName]
-		if !exists {
-			return false, codeResourceNotFound, nil
-		}
-		for k, v := range in.InputSettings {
-			input.Settings[k] = v
-		}
-		return true, success, nil
-	case "SetCurrentProgramScene":
-		if !s.scenes[in.SceneName] {
-			return false, codeResourceNotFound, nil
-		}
-		s.currentScene = in.SceneName
-		return true, success, nil
-	case "StartRecord":
-		if s.recording {
-			return false, codeOutputRunning, nil
-		}
-		s.recording = true
-		s.recordings++
-		name := fmt.Sprintf("recording-%d.mkv", s.recordings)
-		s.recordPath = filepath.Join(s.recordDir, name)
-		if s.recordDir == "" {
-			s.recordPath = `C:\Users\Admin\Class Recordings\_staging\` + name
-		} else if _, err := os.Stat(s.recordDir); err == nil {
-			os.WriteFile(s.recordPath, []byte("fake mkv "+name), 0o644) // OBS creates the file as soon as it starts
-		}
-		return true, success, nil
-	case "StopRecord":
-		if !s.recording {
-			return false, codeOutputNotRunning, nil
-		}
-		s.recording = false
-		return true, success, map[string]any{"outputPath": s.recordPath}
-	case "GetRecordDirectory":
-		return true, success, map[string]any{"recordDirectory": s.recordDir}
-	case "SetRecordDirectory":
-		var d struct {
-			Dir string `json:"recordDirectory"`
-		}
-		json.Unmarshal(requestData, &d)
-		s.recordDir = d.Dir
-		return true, success, nil
-	case "GetProfileList":
-		return true, success, map[string]any{"currentProfileName": s.profile, "profiles": s.profiles}
-	case "CreateProfile", "SetCurrentProfile":
-		var p struct {
-			Name string `json:"profileName"`
-		}
-		json.Unmarshal(requestData, &p)
-		known := s.params[p.Name] != nil
-		if requestType == "CreateProfile" && known {
-			return false, codeResourceAlreadyExists, nil
-		}
-		if requestType == "SetCurrentProfile" && !known {
-			return false, codeResourceNotFound, nil
-		}
-		if !known {
-			s.params[p.Name] = map[string]string{}
-			s.profiles = append(s.profiles, p.Name)
-		}
-		s.profile = p.Name
-		return true, success, nil
-	case "SetProfileParameter", "GetProfileParameter":
-		var p struct {
-			Category string `json:"parameterCategory"`
-			Name     string `json:"parameterName"`
-			Value    string `json:"parameterValue"`
-		}
-		json.Unmarshal(requestData, &p)
-		key := p.Category + "/" + p.Name
-		if requestType == "SetProfileParameter" {
-			s.params[s.profile][key] = p.Value
-			return true, success, nil
-		}
-		value, set := s.params[s.profile][key]
-		if !set {
-			return true, success, map[string]any{"parameterValue": nil}
-		}
-		return true, success, map[string]any{"parameterValue": value}
-	case "GetVideoSettings":
-		return true, success, s.video
-	case "SetVideoSettings":
-		if s.recording {
-			return false, codeOutputRunning, nil
-		}
-		var v map[string]any
-		json.Unmarshal(requestData, &v)
-		for k, val := range v {
-			s.video[k] = val
-		}
-		return true, success, nil
-	case "GetSpecialInputs":
-		out := map[string]any{}
-		for k, v := range s.specialInputs {
-			out[k] = v
-		}
-		return true, success, out
-	case "SetInputMute", "GetInputMute":
-		var m struct {
-			Name  string `json:"inputName"`
-			Muted bool   `json:"inputMuted"`
-		}
-		json.Unmarshal(requestData, &m)
-		if requestType == "SetInputMute" {
-			s.muted[m.Name] = m.Muted
-			return true, success, nil
-		}
-		return true, success, map[string]any{"inputMuted": s.muted[m.Name]}
-	case "GetRecordStatus":
-		return true, success, map[string]any{"outputActive": s.recording, "outputPaused": false, "outputDuration": 0}
-	case "GetStats":
-		return true, success, map[string]any{
-			"renderSkippedFrames": s.renderSkipped, "renderTotalFrames": 1000,
-			"outputSkippedFrames": s.outputSkipped, "outputTotalFrames": 1000,
-			"activeFps": 15.0, "cpuUsage": 7.0,
-		}
-	default:
-		return false, codeUnknownRequest, nil
+	return ok(nil)
+}
+
+func (s *Server) stopRecord(request) reply {
+	if !s.recording {
+		return reply{codeOutputNotRunning, nil}
 	}
+	s.recording = false
+	return ok(map[string]any{"outputPath": s.recordPath})
+}
+
+func (s *Server) createScene(q request) reply {
+	if s.scenes[q.Scene] {
+		return reply{codeExists, nil}
+	}
+	s.scenes[q.Scene] = true
+	return ok(nil)
+}
+
+func (s *Server) createInput(q request) reply {
+	if !s.scenes[q.Scene] {
+		return reply{codeNotFound, nil}
+	}
+	if _, found := s.inputs[q.Input]; found {
+		return reply{codeExists, nil}
+	}
+	s.inputs[q.Input] = &Input{Scene: q.Scene, Kind: q.Kind, Settings: q.Settings}
+	s.itemIDs[q.Scene+"/"+q.Input] = len(s.itemIDs) + 1
+	return ok(map[string]any{"sceneItemId": len(s.itemIDs)})
+}
+
+func (s *Server) setInputSettings(q request) reply {
+	in, found := s.inputs[q.Input]
+	if !found {
+		return reply{codeNotFound, nil}
+	}
+	for k, v := range q.Settings {
+		in.Settings[k] = v
+	}
+	return ok(nil)
+}
+
+func (s *Server) setScene(q request) reply {
+	if !s.scenes[q.Scene] {
+		return reply{codeNotFound, nil}
+	}
+	s.scene = q.Scene
+	return ok(nil)
+}
+
+func (s *Server) sceneItemID(q request) reply {
+	id, found := s.itemIDs[q.Scene+"/"+q.Source]
+	if !found {
+		return reply{codeNotFound, nil}
+	}
+	return ok(map[string]any{"sceneItemId": id})
+}
+
+func (s *Server) setTransform(q request) reply {
+	for key, id := range s.itemIDs {
+		if id == q.ItemID && strings.HasPrefix(key, q.Scene+"/") {
+			s.transform[key] = q.Transform
+			return ok(nil)
+		}
+	}
+	return reply{codeNotFound, nil}
 }
 
 // expectedAuth is written out separately from the client's, so a bug in one doesn't hide in both.
@@ -542,5 +430,5 @@ func expectedAuth(password string) string {
 
 func send(conn *ws.Conn, op int, data any) {
 	encoded, _ := json.Marshal(map[string]any{"op": op, "d": data})
-	conn.WriteText(encoded)
+	_ = conn.WriteText(encoded) // a dropped connection is what some tests want
 }

@@ -13,7 +13,7 @@ import (
 	"sync/atomic"
 	"time"
 
-	"classrec/internal/ws"
+	"classrec/internal/obs/ws"
 )
 
 // ErrAuthFailed means OBS rejected the password.
@@ -144,40 +144,6 @@ func (c *Client) Stats(ctx context.Context) (Stats, error) {
 	return stats, err
 }
 
-// Scenes lists the names of OBS's scenes.
-func (c *Client) Scenes(ctx context.Context) ([]string, error) {
-	var response struct {
-		Scenes []struct {
-			Name string `json:"sceneName"`
-		} `json:"scenes"`
-	}
-	if err := c.call(ctx, "GetSceneList", nil, &response); err != nil {
-		return nil, err
-	}
-	names := make([]string, 0, len(response.Scenes))
-	for _, s := range response.Scenes {
-		names = append(names, s.Name)
-	}
-	return names, nil
-}
-
-// Inputs lists the names of OBS's inputs (sources).
-func (c *Client) Inputs(ctx context.Context) ([]string, error) {
-	var response struct {
-		Inputs []struct {
-			Name string `json:"inputName"`
-		} `json:"inputs"`
-	}
-	if err := c.call(ctx, "GetInputList", nil, &response); err != nil {
-		return nil, err
-	}
-	names := make([]string, 0, len(response.Inputs))
-	for _, in := range response.Inputs {
-		names = append(names, in.Name)
-	}
-	return names, nil
-}
-
 // CreateScene adds an empty scene.
 func (c *Client) CreateScene(ctx context.Context, name string) error {
 	return c.call(ctx, "CreateScene", map[string]any{"sceneName": name}, nil)
@@ -230,20 +196,9 @@ func (c *Client) Profiles(ctx context.Context) (names []string, current string, 
 	return response.Profiles, response.Current, err
 }
 
-// CreateProfile adds a profile. OBS switches to the new profile.
-func (c *Client) CreateProfile(ctx context.Context, name string) error {
-	return c.call(ctx, "CreateProfile", map[string]any{"profileName": name}, nil)
-}
-
 // SetCurrentProfile switches OBS to an existing profile.
 func (c *Client) SetCurrentProfile(ctx context.Context, name string) error {
 	return c.call(ctx, "SetCurrentProfile", map[string]any{"profileName": name}, nil)
-}
-
-// SetProfileParameter writes one profile.ini value of the current profile.
-func (c *Client) SetProfileParameter(ctx context.Context, category, name, value string) error {
-	data := map[string]any{"parameterCategory": category, "parameterName": name, "parameterValue": value}
-	return c.call(ctx, "SetProfileParameter", data, nil)
 }
 
 // ProfileParameter reads one profile.ini value of the current profile; "" if it is not set.
@@ -268,42 +223,11 @@ type VideoSettings struct {
 	OutputHeight   int `json:"outputHeight"`
 }
 
-// SetVideoSettings sets the canvas, output size and frame rate. OBS refuses while an output is active.
-func (c *Client) SetVideoSettings(ctx context.Context, v VideoSettings) error {
-	return c.call(ctx, "SetVideoSettings", v, nil)
-}
-
 // VideoSettings reads the current video settings.
 func (c *Client) VideoSettings(ctx context.Context) (VideoSettings, error) {
 	var v VideoSettings
 	err := c.call(ctx, "GetVideoSettings", nil, &v)
 	return v, err
-}
-
-// Monitor is one display as OBS sees it, in pixels.
-type Monitor struct {
-	Width, Height int
-	X, Y          int
-}
-
-// Monitors lists the displays OBS sees.
-func (c *Client) Monitors(ctx context.Context) ([]Monitor, error) {
-	var response struct {
-		Monitors []struct {
-			Width  int `json:"monitorWidth"`
-			Height int `json:"monitorHeight"`
-			X      int `json:"monitorPositionX"`
-			Y      int `json:"monitorPositionY"`
-		} `json:"monitors"`
-	}
-	if err := c.call(ctx, "GetMonitorList", nil, &response); err != nil {
-		return nil, err
-	}
-	monitors := make([]Monitor, 0, len(response.Monitors))
-	for _, m := range response.Monitors {
-		monitors = append(monitors, Monitor{Width: m.Width, Height: m.Height, X: m.X, Y: m.Y})
-	}
-	return monitors, nil
 }
 
 // SceneItemID finds the id of a source's item in a scene.
@@ -324,15 +248,6 @@ func (c *Client) SetSceneItemTransform(ctx context.Context, scene string, itemID
 // SetInputMute mutes or unmutes an input everywhere it is used.
 func (c *Client) SetInputMute(ctx context.Context, name string, muted bool) error {
 	return c.call(ctx, "SetInputMute", map[string]any{"inputName": name, "inputMuted": muted}, nil)
-}
-
-// InputMuted reports whether the input is muted.
-func (c *Client) InputMuted(ctx context.Context, name string) (bool, error) {
-	var response struct {
-		Muted bool `json:"inputMuted"`
-	}
-	err := c.call(ctx, "GetInputMute", map[string]any{"inputName": name}, &response)
-	return response.Muted, err
 }
 
 // GlobalAudioInputs returns the names of the global Desktop Audio and Mic/Aux inputs OBS has set up.
