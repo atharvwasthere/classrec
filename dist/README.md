@@ -25,6 +25,23 @@ in the folder you ran the command from.
 - Cost is about ₹0.58 per minute of class including GST (a 2 hour class is about ₹70).
 - Windows may say "Windows protected your PC" the first time, because the program is not signed. Click "More info", then "Run anyway".
 
+## Agent mode: record only, or record and transcribe
+
+The class agent (not finished yet) records classes. By default it only records: it never sends anything to Sarvam
+and costs nothing. To also transcribe each class automatically when it ends, put this in `C:\classrec\settings.json`
+(create the file with Notepad if it doesn't exist):
+
+```
+{ "mode": "full" }
+```
+
+If the file already has other lines (the overlay keeps its position there), only add the `"mode": "full",` line and
+keep the rest. Remove the line, or write `"record"`, to go back to recording only. A misspelt or unreadable value
+means record only. On a command line, `--mode record` or `--mode full` overrides the file. The agent prints the mode
+it is using when it starts.
+
+A class can always be transcribed by hand with `classrec.exe process`, in either mode.
+
 ## Testing the class agent (not for daily use yet)
 
 Two test commands. Nothing is recorded and no Sarvam credits are spent.

@@ -34,7 +34,7 @@ func runOverlayDemo(ctx context.Context, args []string) error {
 	marksPath := filepath.Join(*dir, "marks.json")
 	start := time.Now()
 	o, err := overlay.New(overlay.Config{
-		SettingsPath: filepath.Join(exeDir(), "settings.json"),
+		SettingsPath: settingsPath(),
 		OnMark:       func() error { return marks.Append(marksPath, time.Since(start).Seconds()) },
 	})
 	if err != nil {

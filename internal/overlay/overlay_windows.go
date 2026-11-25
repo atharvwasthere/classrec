@@ -1,16 +1,12 @@
 package overlay
 
 import (
-	"encoding/json"
 	"errors"
-	"os"
 	"runtime"
 	"sync"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
-
-	"classrec/internal/fsx"
 )
 
 var (
@@ -143,7 +139,6 @@ type Overlay struct {
 }
 
 type rect struct{ Left, Top, Right, Bottom int32 }
-type point struct{ X, Y int32 }
 
 type wndClassEx struct {
 	Size, Style                      uint32
@@ -538,29 +533,4 @@ func DPIAwareness() bool {
 	ctx, _, _ := procGetThreadDpiContext.Call()
 	eq, _, _ := procAreDpiContextsEqual.Call(ctx, dpiPerMonitorV2)
 	return eq != 0
-}
-
-type settings struct {
-	Overlay *point `json:"overlay,omitempty"`
-}
-
-// loadPosition returns the saved top-left in physical pixels; ok is false if there is none.
-func loadPosition(path string) (point, bool) {
-	var s settings
-	b, err := os.ReadFile(path)
-	if err != nil || json.Unmarshal(b, &s) != nil || s.Overlay == nil {
-		return point{}, false
-	}
-	return *s.Overlay, true
-}
-
-func savePosition(path string, p point) {
-	var s settings
-	if b, err := os.ReadFile(path); err == nil {
-		json.Unmarshal(b, &s)
-	}
-	s.Overlay = &p
-	if b, err := json.MarshalIndent(s, "", "  "); err == nil {
-		fsx.WriteFileAtomic(path, b)
-	}
 }

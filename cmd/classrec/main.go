@@ -17,7 +17,7 @@ import (
 )
 
 const usage = `usage: classrec process <video> [flags]
-       classrec agent --debug-detect [--interval 10s]
+       classrec agent --debug-detect [--interval 10s] [--mode record|full]
        classrec overlay-demo [--dir <folder for marks.json>] [--status normal|amber|red]
 
   --out <dir>          output directory (default ./out/<video name>)
