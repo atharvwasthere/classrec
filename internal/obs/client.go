@@ -144,6 +144,68 @@ func (c *Client) Stats(ctx context.Context) (Stats, error) {
 	return stats, err
 }
 
+// Scenes lists the names of OBS's scenes.
+func (c *Client) Scenes(ctx context.Context) ([]string, error) {
+	var response struct {
+		Scenes []struct {
+			Name string `json:"sceneName"`
+		} `json:"scenes"`
+	}
+	if err := c.call(ctx, "GetSceneList", nil, &response); err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(response.Scenes))
+	for _, s := range response.Scenes {
+		names = append(names, s.Name)
+	}
+	return names, nil
+}
+
+// Inputs lists the names of OBS's inputs (sources).
+func (c *Client) Inputs(ctx context.Context) ([]string, error) {
+	var response struct {
+		Inputs []struct {
+			Name string `json:"inputName"`
+		} `json:"inputs"`
+	}
+	if err := c.call(ctx, "GetInputList", nil, &response); err != nil {
+		return nil, err
+	}
+	names := make([]string, 0, len(response.Inputs))
+	for _, in := range response.Inputs {
+		names = append(names, in.Name)
+	}
+	return names, nil
+}
+
+// CreateScene adds an empty scene.
+func (c *Client) CreateScene(ctx context.Context, name string) error {
+	return c.call(ctx, "CreateScene", map[string]any{"sceneName": name}, nil)
+}
+
+// CreateInput adds an input of the given kind to a scene, e.g. "window_capture".
+func (c *Client) CreateInput(ctx context.Context, scene, name, kind string, settings map[string]any) error {
+	data := map[string]any{
+		"sceneName":        scene,
+		"inputName":        name,
+		"inputKind":        kind,
+		"inputSettings":    settings,
+		"sceneItemEnabled": true,
+	}
+	return c.call(ctx, "CreateInput", data, nil)
+}
+
+// SetInputSettings changes the given settings of an existing input and keeps the rest.
+func (c *Client) SetInputSettings(ctx context.Context, name string, settings map[string]any) error {
+	data := map[string]any{"inputName": name, "inputSettings": settings, "overlay": true}
+	return c.call(ctx, "SetInputSettings", data, nil)
+}
+
+// SetCurrentScene makes the scene the one that gets recorded.
+func (c *Client) SetCurrentScene(ctx context.Context, name string) error {
+	return c.call(ctx, "SetCurrentProgramScene", map[string]any{"sceneName": name}, nil)
+}
+
 // InputLevel returns the latest level of the named input; ok is false until OBS has reported one.
 func (c *Client) InputLevel(inputName string) (level InputLevel, ok bool) {
 	c.levelsMu.Lock()

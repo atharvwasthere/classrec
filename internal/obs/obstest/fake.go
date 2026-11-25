@@ -19,10 +19,19 @@ const (
 	salt      = "lM1GncleQOaCu9lT1yeUZhFYnqhsLLP1G5lAGo3ixaI="
 	challenge = "+IxH4CnCiqpX1rM9scsNynZzbOe4KhDeYcTNS3PDaeY="
 
-	codeOutputRunning    = 500
-	codeOutputNotRunning = 501
-	codeUnknownRequest   = 204
+	codeOutputRunning         = 500
+	codeOutputNotRunning      = 501
+	codeUnknownRequest        = 204
+	codeResourceNotFound      = 600
+	codeResourceAlreadyExists = 601
 )
+
+// Input is an input the fake holds, as created by CreateInput.
+type Input struct {
+	Scene    string
+	Kind     string
+	Settings map[string]any
+}
 
 // Server is a fake OBS. Set Password to "" to run without authentication.
 type Server struct {
@@ -36,11 +45,17 @@ type Server struct {
 	recordings    int
 	renderSkipped int
 	outputSkipped int
+
+	scenes       map[string]bool
+	sceneOrder   []string
+	inputs       map[string]*Input
+	inputOrder   []string
+	currentScene string
 }
 
 // New starts a fake OBS that requires password.
 func New(password string) *Server {
-	s := &Server{Password: password}
+	s := &Server{Password: password, scenes: map[string]bool{}, inputs: map[string]*Input{}}
 	s.srv = httptest.NewServer(http.HandlerFunc(s.serve))
 	return s
 }
@@ -77,6 +92,29 @@ func (s *Server) Recording() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.recording
+}
+
+// CurrentScene is the scene OBS is set to record.
+func (s *Server) CurrentScene() string {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	return s.currentScene
+}
+
+// Input returns a copy of the named input's state.
+func (s *Server) Input(name string) (Input, bool) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	in, ok := s.inputs[name]
+	if !ok {
+		return Input{}, false
+	}
+	copied := *in
+	copied.Settings = map[string]any{}
+	for k, v := range in.Settings {
+		copied.Settings[k] = v
+	}
+	return copied, true
 }
 
 // SetSkippedFrames sets the counters GetStats reports.
@@ -127,14 +165,15 @@ func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 		var m struct {
 			Op   int `json:"op"`
 			Data struct {
-				RequestType string `json:"requestType"`
-				RequestID   string `json:"requestId"`
+				RequestType string          `json:"requestType"`
+				RequestID   string          `json:"requestId"`
+				RequestData json.RawMessage `json:"requestData"`
 			} `json:"d"`
 		}
 		if json.Unmarshal(raw, &m) != nil || m.Op != 6 {
 			continue
 		}
-		s.answer(conn, m.Data.RequestType, m.Data.RequestID)
+		s.answer(conn, m.Data.RequestType, m.Data.RequestID, m.Data.RequestData)
 	}
 }
 
@@ -168,10 +207,10 @@ func (s *Server) handshake(conn *ws.Conn) bool {
 	return true
 }
 
-func (s *Server) answer(conn *ws.Conn, requestType, requestID string) {
+func (s *Server) answer(conn *ws.Conn, requestType, requestID string, requestData json.RawMessage) {
 	s.mu.Lock()
 	s.requests = append(s.requests, requestType)
-	ok, code, data := s.handleRequest(requestType)
+	ok, code, data := s.handleRequest(requestType, requestData)
 	s.mu.Unlock()
 
 	response := map[string]any{
@@ -186,9 +225,60 @@ func (s *Server) answer(conn *ws.Conn, requestType, requestID string) {
 }
 
 // handleRequest runs one request against the fake's state; s.mu is held.
-func (s *Server) handleRequest(requestType string) (ok bool, code int, data map[string]any) {
+func (s *Server) handleRequest(requestType string, requestData json.RawMessage) (ok bool, code int, data map[string]any) {
 	const success = 100
+	var in struct {
+		SceneName     string         `json:"sceneName"`
+		InputName     string         `json:"inputName"`
+		InputKind     string         `json:"inputKind"`
+		InputSettings map[string]any `json:"inputSettings"`
+	}
+	json.Unmarshal(requestData, &in) // absent or odd data leaves the zero value, like a missing field
 	switch requestType {
+	case "GetSceneList":
+		scenes := []any{}
+		for _, name := range s.sceneOrder {
+			scenes = append(scenes, map[string]any{"sceneName": name})
+		}
+		return true, success, map[string]any{"scenes": scenes, "currentProgramSceneName": s.currentScene}
+	case "GetInputList":
+		inputs := []any{}
+		for _, name := range s.inputOrder {
+			inputs = append(inputs, map[string]any{"inputName": name, "inputKind": s.inputs[name].Kind})
+		}
+		return true, success, map[string]any{"inputs": inputs}
+	case "CreateScene":
+		if _, exists := s.scenes[in.SceneName]; exists {
+			return false, codeResourceAlreadyExists, nil
+		}
+		s.scenes[in.SceneName] = true
+		s.sceneOrder = append(s.sceneOrder, in.SceneName)
+		return true, success, nil
+	case "CreateInput":
+		if !s.scenes[in.SceneName] {
+			return false, codeResourceNotFound, nil
+		}
+		if _, exists := s.inputs[in.InputName]; exists {
+			return false, codeResourceAlreadyExists, nil
+		}
+		s.inputs[in.InputName] = &Input{Scene: in.SceneName, Kind: in.InputKind, Settings: in.InputSettings}
+		s.inputOrder = append(s.inputOrder, in.InputName)
+		return true, success, nil
+	case "SetInputSettings":
+		input, exists := s.inputs[in.InputName]
+		if !exists {
+			return false, codeResourceNotFound, nil
+		}
+		for k, v := range in.InputSettings {
+			input.Settings[k] = v
+		}
+		return true, success, nil
+	case "SetCurrentProgramScene":
+		if !s.scenes[in.SceneName] {
+			return false, codeResourceNotFound, nil
+		}
+		s.currentScene = in.SceneName
+		return true, success, nil
 	case "StartRecord":
 		if s.recording {
 			return false, codeOutputRunning, nil
