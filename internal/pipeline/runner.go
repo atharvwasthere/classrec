@@ -7,6 +7,7 @@ import (
 	"classrec/internal/manifest"
 )
 
+// Stage is one named step of the pipeline.
 type Stage struct {
 	Name string
 	// Verify confirms a stage the manifest calls done still has its outputs. Nil means trust the manifest.
@@ -14,9 +15,9 @@ type Stage struct {
 	Run    func(ctx context.Context) error
 }
 
-// Execute runs stages in order, skipping completed ones. Once a stage actually
+// execute runs stages in order, skipping completed ones. Once a stage actually
 // runs, every later stage reruns too, since its inputs may have changed.
-func Execute(ctx context.Context, m *manifest.Manifest, stages []Stage, logf func(string, ...any)) error {
+func execute(ctx context.Context, m *manifest.Manifest, stages []Stage, logf func(string, ...any)) error {
 	rerun := false
 	for _, s := range stages {
 		if !rerun && m.IsDone(s.Name) && (s.Verify == nil || s.Verify()) {

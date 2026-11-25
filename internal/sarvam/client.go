@@ -23,6 +23,7 @@ import (
 
 const defaultBaseURL = "https://api.sarvam.ai"
 
+// JobParams are the batch speech-to-text job settings.
 type JobParams struct {
 	Model          string   `json:"model"`
 	Mode           string   `json:"mode"`
@@ -38,6 +39,7 @@ func (p JobParams) Fingerprint() string {
 	return hex.EncodeToString(sum[:4])
 }
 
+// RetryPolicy says how often and how patiently failed requests are retried.
 type RetryPolicy struct {
 	Max      int
 	Base     time.Duration
@@ -45,25 +47,33 @@ type RetryPolicy struct {
 	Sleep    func(ctx context.Context, d time.Duration) error
 }
 
-type Client struct {
+// Options are what a Client can be pointed at; New uses Sarvam's real API with patient retries.
+type Options struct {
 	BaseURL   string
-	HTTP      *http.Client
-	Retry     RetryPolicy
 	PollEvery time.Duration
-
-	key string
+	Retry     RetryPolicy
 }
 
+// Client calls Sarvam's batch speech-to-text API.
+type Client struct {
+	opts Options
+	http *http.Client
+	key  string
+}
+
+// New returns a client for Sarvam's API with apiKey.
 func New(apiKey string) *Client {
-	return &Client{
+	return NewWith(apiKey, Options{
 		BaseURL:   defaultBaseURL,
-		HTTP:      &http.Client{Timeout: 10 * time.Minute},
-		Retry:     RetryPolicy{Max: 5, Base: time.Second, MaxDelay: 30 * time.Second, Sleep: sleep},
 		PollEvery: 5 * time.Second,
-		key:       apiKey,
-	}
+		Retry:     RetryPolicy{Max: 5, Base: time.Second, MaxDelay: 30 * time.Second, Sleep: sleep},
+	})
 }
 
+// NewWith returns a client with the given options, e.g. pointed at a fake server.
+func NewWith(apiKey string, o Options) *Client {
+	return &Client{opts: o, http: &http.Client{Timeout: 10 * time.Minute}, key: apiKey}
+}
 func sleep(ctx context.Context, d time.Duration) error {
 	t := time.NewTimer(d)
 	defer t.Stop()
@@ -140,9 +150,9 @@ func (c *Client) delay(attempt int, retryAfter time.Duration) time.Duration {
 	if retryAfter > 0 {
 		return retryAfter
 	}
-	d := c.Retry.Base << attempt
-	if d > c.Retry.MaxDelay || d <= 0 {
-		d = c.Retry.MaxDelay
+	d := c.opts.Retry.Base << attempt
+	if d > c.opts.Retry.MaxDelay || d <= 0 {
+		d = c.opts.Retry.MaxDelay
 	}
 	return time.Duration(float64(d) * (0.8 + 0.4*rand.Float64()))
 }
@@ -150,48 +160,51 @@ func (c *Client) delay(attempt int, retryAfter time.Duration) time.Duration {
 // do sends the request built by build, retrying network errors and 408/429/5xx with
 // exponential backoff. It returns the body of the first non-retryable response.
 func (c *Client) do(ctx context.Context, build func() (*http.Request, error)) (int, []byte, error) {
-	var lastErr error
 	for attempt := 0; ; attempt++ {
-		req, err := build()
-		if err != nil {
-			return 0, nil, err
+		status, body, retryAfter, err := c.once(ctx, build)
+		if err == nil || ctx.Err() != nil || retryAfter < 0 {
+			return status, body, err
 		}
-		req = req.WithContext(ctx)
-		resp, err := c.HTTP.Do(req)
-		var retryAfter time.Duration
-		if err != nil {
-			if ctx.Err() != nil {
-				return 0, nil, ctx.Err()
-			}
-			lastErr = scrub(err)
-		} else {
-			body, readErr := io.ReadAll(resp.Body)
-			resp.Body.Close()
-			switch {
-			case readErr != nil:
-				lastErr = scrub(readErr)
-			case !retryableStatus(resp.StatusCode):
-				return resp.StatusCode, body, nil
-			default:
-				apiErr := parseAPIError(resp.StatusCode, body)
-				if apiErr.Code == "insufficient_quota_error" {
-					return resp.StatusCode, body, nil
-				}
-				lastErr = apiErr
-				if s, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && s > 0 {
-					retryAfter = time.Duration(s) * time.Second
-				}
-			}
+		if attempt >= c.opts.Retry.Max {
+			return 0, nil, fmt.Errorf("giving up after %d attempts: %w", attempt+1, err)
 		}
-		if attempt >= c.Retry.Max {
-			return 0, nil, fmt.Errorf("giving up after %d attempts: %w", attempt+1, lastErr)
-		}
-		if err := c.Retry.Sleep(ctx, c.delay(attempt, retryAfter)); err != nil {
+		if err := c.opts.Retry.Sleep(ctx, c.delay(attempt, retryAfter)); err != nil {
 			return 0, nil, err
 		}
 	}
 }
 
+// once sends one request. A nil error means a final answer; otherwise the request may be retried
+// after retryAfter (0: back off as usual), unless retryAfter is negative.
+func (c *Client) once(ctx context.Context, build func() (*http.Request, error)) (status int, body []byte, retryAfter time.Duration, err error) {
+	req, err := build()
+	if err != nil {
+		return 0, nil, -1, err
+	}
+	resp, err := c.http.Do(req.WithContext(ctx))
+	if err != nil {
+		if ctx.Err() != nil {
+			return 0, nil, -1, ctx.Err()
+		}
+		return 0, nil, 0, scrub(err)
+	}
+	body, err = io.ReadAll(resp.Body)
+	resp.Body.Close()
+	if err != nil {
+		return 0, nil, 0, scrub(err)
+	}
+	if !retryableStatus(resp.StatusCode) {
+		return resp.StatusCode, body, 0, nil
+	}
+	apiErr := parseAPIError(resp.StatusCode, body)
+	if apiErr.Code == "insufficient_quota_error" { // waiting will not top up the account
+		return resp.StatusCode, body, 0, nil
+	}
+	if s, err := strconv.Atoi(resp.Header.Get("Retry-After")); err == nil && s > 0 {
+		retryAfter = time.Duration(s) * time.Second
+	}
+	return 0, nil, retryAfter, apiErr
+}
 func (c *Client) apiJSON(ctx context.Context, method, path string, in, out any) error {
 	var payload []byte
 	if in != nil {
@@ -201,7 +214,7 @@ func (c *Client) apiJSON(ctx context.Context, method, path string, in, out any) 
 		}
 	}
 	status, body, err := c.do(ctx, func() (*http.Request, error) {
-		req, err := http.NewRequest(method, c.BaseURL+path, bytes.NewReader(payload))
+		req, err := http.NewRequest(method, c.opts.BaseURL+path, bytes.NewReader(payload))
 		if err != nil {
 			return nil, err
 		}

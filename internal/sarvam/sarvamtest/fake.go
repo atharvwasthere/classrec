@@ -13,12 +13,12 @@ import (
 	"sync/atomic"
 )
 
+// Server is a fake Sarvam API. Its exported fields script failures and record what it received.
 type Server struct {
 	*httptest.Server
 	Key string
 
 	api      atomic.Int64 // calls to Sarvam's own endpoints
-	blob     atomic.Int64 // presigned upload/download calls
 	mu       sync.Mutex
 	jobs     map[string]*job
 	nextJob  int
@@ -37,6 +37,7 @@ type job struct {
 	starts int
 }
 
+// New starts a fake that accepts key.
 func New(key string) *Server {
 	s := &Server{Key: key, jobs: map[string]*job{}, failures: map[string]int{}}
 	s.Server = httptest.NewServer(http.HandlerFunc(s.handle))
@@ -44,9 +45,9 @@ func New(key string) *Server {
 }
 
 // APICalls counts requests to Sarvam endpoints (not the presigned blob URLs).
-func (s *Server) APICalls() int  { return int(s.api.Load()) }
-func (s *Server) BlobCalls() int { return int(s.blob.Load()) }
+func (s *Server) APICalls() int { return int(s.api.Load()) }
 
+// Fail503 answers the next times requests to a path ending in pathSuffix with 503.
 func (s *Server) Fail503(pathSuffix string, times int) {
 	s.mu.Lock()
 	s.failures[pathSuffix] = times
@@ -79,7 +80,6 @@ func writeJSON(w http.ResponseWriter, status int, v any) {
 
 func (s *Server) handle(w http.ResponseWriter, r *http.Request) {
 	if strings.HasPrefix(r.URL.Path, "/blob/") || strings.HasPrefix(r.URL.Path, "/out/") {
-		s.blob.Add(1)
 		s.handleBlob(w, r)
 		return
 	}
@@ -216,12 +216,12 @@ func (s *Server) handleBlob(w http.ResponseWriter, r *http.Request) {
 		s.mu.Lock()
 		in := s.jobs[parts[1]].out[parts[2]]
 		s.mu.Unlock()
-		writeJSON(w, 200, Output(in))
+		writeJSON(w, 200, output(in))
 	}
 }
 
-// Output is the transcript the fake returns for an output file: two segments at 0-5s and 5-10s.
-func Output(name string) map[string]any {
+// output is the transcript the fake returns for an output file: two segments at 0-5s and 5-10s.
+func output(name string) map[string]any {
 	return map[string]any{
 		"request_id":    "req",
 		"transcript":    "alpha " + name + " beta",

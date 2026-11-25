@@ -11,6 +11,7 @@ import (
 	"time"
 )
 
+// Segment is one timestamped phrase of the transcript.
 type Segment struct {
 	Start float64 `json:"start"`
 	End   float64 `json:"end"`
@@ -136,6 +137,7 @@ func around(segs []Segment, mark, before, after float64) []Segment {
 	return out
 }
 
+// MarksMarkdown lists the transcript from before to after seconds around each mark.
 func MarksMarkdown(marks []float64, segs []Segment, before, after float64) string {
 	var b strings.Builder
 	for i, mark := range marks {

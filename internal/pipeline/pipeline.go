@@ -11,6 +11,7 @@ import (
 	"classrec/internal/sarvam"
 )
 
+// Config is one run of the pipeline over one video.
 type Config struct {
 	Video string
 	Out   string
@@ -48,6 +49,7 @@ func (c *Config) applyDefaults() {
 	}
 }
 
+// Pipeline turns a video into a transcript, one resumable stage at a time.
 type Pipeline struct {
 	cfg   Config
 	m     *manifest.Manifest
@@ -104,6 +106,7 @@ func (p *Pipeline) stages() []Stage {
 	return stages
 }
 
+// Run runs every stage not yet done, stopping after Config.StopAfter if set.
 func (p *Pipeline) Run(ctx context.Context) error {
 	stages := p.stages()
 	if slices.ContainsFunc(stages, func(s Stage) bool { return s.Name == "write" }) {
@@ -113,7 +116,7 @@ func (p *Pipeline) Run(ctx context.Context) error {
 			return err
 		}
 	}
-	if err := Execute(ctx, p.m, stages, p.logf); err != nil {
+	if err := execute(ctx, p.m, stages, p.logf); err != nil {
 		return fmt.Errorf("%w (re-run to resume from this stage)", err)
 	}
 	return nil

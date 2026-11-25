@@ -10,6 +10,7 @@ import (
 	"time"
 )
 
+// BatchFile is one audio file of a batch job.
 type BatchFile struct {
 	Name string // unique within the job, e.g. chunk_000.ogg
 	Path string
@@ -23,6 +24,7 @@ type BatchState struct {
 	Params  string   `json:"params"`
 }
 
+// BatchRequest is one batch job to run.
 type BatchRequest struct {
 	Params JobParams
 	Files  []BatchFile
@@ -33,6 +35,7 @@ type BatchRequest struct {
 	Logf func(string, ...any)
 }
 
+// FileResult is the raw output for one file and how long each step took.
 type FileResult struct {
 	Raw        []byte
 	JobID      string
@@ -48,54 +51,13 @@ func (c *Client) RunBatch(ctx context.Context, req BatchRequest) (map[string]Fil
 	for i, f := range req.Files {
 		names[i] = f.Name
 	}
-	fingerprint := req.Params.Fingerprint()
-	st := BatchState{Files: names, Params: fingerprint}
-	if r := req.Resume; r != nil && r.JobID != "" && r.Params == fingerprint && slices.Equal(r.Files, names) {
+	st := BatchState{Files: names, Params: req.Params.Fingerprint()}
+	if r := req.Resume; r != nil && r.JobID != "" && r.Params == st.Params && slices.Equal(r.Files, names) {
 		st = *r
 	}
-	persist := func() error {
-		snapshot := st
-		return req.Save(&snapshot)
-	}
-	uploadMS := map[string]int64{}
-
-	if st.JobID == "" {
-		id, err := c.initJob(ctx, req.Params)
-		if err != nil {
-			return nil, fmt.Errorf("init job: %w", err)
-		}
-		st.JobID = id
-		if err := persist(); err != nil {
-			return nil, err
-		}
-		req.Logf("created job %s", id)
-	} else {
-		req.Logf("resuming job %s", st.JobID)
-	}
-
-	if !st.Started {
-		links, err := c.uploadLinks(ctx, st.JobID, names)
-		if err != nil {
-			return nil, fmt.Errorf("upload links: %w", err)
-		}
-		for _, f := range req.Files {
-			t := time.Now()
-			req.Logf("uploading %s", f.Name)
-			if err := c.putFile(ctx, links[f.Name], f.Path); err != nil {
-				return nil, fmt.Errorf("upload %s: %w", f.Name, err)
-			}
-			uploadMS[f.Name] = time.Since(t).Milliseconds()
-		}
-		if err := c.start(ctx, st.JobID); err != nil {
-			if s, sErr := c.status(ctx, st.JobID); sErr != nil || s.JobState == "Accepted" {
-				return nil, fmt.Errorf("start job: %w", err)
-			}
-		}
-		st.Started = true
-		if err := persist(); err != nil {
-			return nil, err
-		}
-		req.Logf("job started")
+	uploadMS, err := c.startJob(ctx, req, &st)
+	if err != nil {
+		return nil, err
 	}
 
 	waitStart := time.Now()
@@ -111,7 +73,7 @@ func (c *Client) RunBatch(ctx context.Context, req BatchRequest) (map[string]Fil
 
 	results, err := c.collect(ctx, st.JobID, status, names, uploadMS, wall)
 	// The job is over unless a download failed; a finished job must not be resumed.
-	var partial *FilesFailedError
+	var partial *filesFailedError
 	if err == nil || errors.As(err, &partial) {
 		if serr := req.Save(nil); serr != nil {
 			return results, serr
@@ -120,6 +82,65 @@ func (c *Client) RunBatch(ctx context.Context, req BatchRequest) (map[string]Fil
 	return results, err
 }
 
+// startJob creates the job unless st resumes one, then uploads the files and starts it unless
+// that was done already, saving st after each step so a crash resumes the same paid job.
+func (c *Client) startJob(ctx context.Context, req BatchRequest, st *BatchState) (uploadMS map[string]int64, err error) {
+	persist := func() error {
+		snapshot := *st
+		return req.Save(&snapshot)
+	}
+	if st.JobID == "" {
+		if st.JobID, err = c.initJob(ctx, req.Params); err != nil {
+			return nil, fmt.Errorf("init job: %w", err)
+		}
+		if err := persist(); err != nil {
+			return nil, err
+		}
+		req.Logf("created job %s", st.JobID)
+	} else {
+		req.Logf("resuming job %s", st.JobID)
+	}
+	if st.Started {
+		return nil, nil
+	}
+	if uploadMS, err = c.upload(ctx, st.JobID, req); err != nil {
+		return nil, err
+	}
+	if err := c.start(ctx, st.JobID); err != nil {
+		// a lost answer may hide a start that worked; only a job still waiting was not started
+		if s, sErr := c.status(ctx, st.JobID); sErr != nil || s.JobState == "Accepted" {
+			return nil, fmt.Errorf("start job: %w", err)
+		}
+	}
+	st.Started = true
+	if err := persist(); err != nil {
+		return nil, err
+	}
+	req.Logf("job started")
+	return uploadMS, nil
+}
+
+// upload puts every file of req into the job and says how long each took.
+func (c *Client) upload(ctx context.Context, jobID string, req BatchRequest) (map[string]int64, error) {
+	names := make([]string, len(req.Files))
+	for i, f := range req.Files {
+		names[i] = f.Name
+	}
+	links, err := c.uploadLinks(ctx, jobID, names)
+	if err != nil {
+		return nil, fmt.Errorf("upload links: %w", err)
+	}
+	uploadMS := map[string]int64{}
+	for _, f := range req.Files {
+		t := time.Now()
+		req.Logf("uploading %s", f.Name)
+		if err := c.putFile(ctx, links[f.Name], f.Path); err != nil {
+			return nil, fmt.Errorf("upload %s: %w", f.Name, err)
+		}
+		uploadMS[f.Name] = time.Since(t).Milliseconds()
+	}
+	return uploadMS, nil
+}
 func (c *Client) waitDone(ctx context.Context, jobID string, logf func(string, ...any)) (*jobStatus, error) {
 	last := ""
 	for {
@@ -134,7 +155,7 @@ func (c *Client) waitDone(ctx context.Context, jobID string, logf func(string, .
 		if s.JobState == "Completed" || s.JobState == "Failed" {
 			return s, nil
 		}
-		if err := c.Retry.Sleep(ctx, c.PollEvery); err != nil {
+		if err := c.opts.Retry.Sleep(ctx, c.opts.PollEvery); err != nil {
 			return nil, fmt.Errorf("waiting for job %s (it keeps running; re-run to resume): %w", jobID, err)
 		}
 	}
@@ -142,30 +163,7 @@ func (c *Client) waitDone(ctx context.Context, jobID string, logf func(string, .
 
 func (c *Client) collect(ctx context.Context, jobID string, status *jobStatus, names []string,
 	uploadMS map[string]int64, wall int64) (map[string]FileResult, error) {
-
-	outputFor := map[string]string{} // input name -> output name
-	var failed []string
-	for _, d := range status.JobDetails {
-		if len(d.Inputs) == 0 {
-			continue
-		}
-		in := d.Inputs[0].FileName
-		if d.State == "Success" && len(d.Outputs) > 0 {
-			outputFor[in] = d.Outputs[0].FileName
-			continue
-		}
-		msg := d.State
-		if d.ErrorMessage != nil {
-			msg += ": " + *d.ErrorMessage
-		}
-		failed = append(failed, in+" ("+msg+")")
-	}
-	for _, n := range names {
-		if _, ok := outputFor[n]; !ok && !containsPrefix(failed, n) {
-			failed = append(failed, n+" (no result reported)")
-		}
-	}
-
+	outputFor, failed := outputsByInput(status, names)
 	results := map[string]FileResult{}
 	if len(outputFor) > 0 {
 		outs := make([]string, 0, len(outputFor))
@@ -179,32 +177,51 @@ func (c *Client) collect(ctx context.Context, jobID string, status *jobStatus, n
 		for in, out := range outputFor {
 			t := time.Now()
 			raw, err := c.getBytes(ctx, links[out])
+			if err == nil && !json.Valid(raw) {
+				err = errors.New("output is not JSON")
+			}
 			if err != nil {
 				return results, fmt.Errorf("download %s: %w", in, err)
-			}
-			if !json.Valid(raw) {
-				return results, fmt.Errorf("download %s: output is not JSON", in)
 			}
 			results[in] = FileResult{Raw: raw, JobID: jobID, UploadMS: uploadMS[in], JobWallMS: wall, DownloadMS: time.Since(t).Milliseconds()}
 		}
 	}
 	if len(failed) > 0 {
-		return results, &FilesFailedError{Files: failed}
+		return results, &filesFailedError{Files: failed}
 	}
 	return results, nil
 }
 
-// FilesFailedError means the job finished but some files had no result. The job is
-// over, so the caller should retry only those files in a new one.
-type FilesFailedError struct{ Files []string }
-
-func (e *FilesFailedError) Error() string { return "files failed: " + strings.Join(e.Files, "; ") }
-
-func containsPrefix(list []string, name string) bool {
-	for _, s := range list {
-		if strings.HasPrefix(s, name+" ") {
-			return true
+// outputsByInput maps each input file that succeeded to its output file, and describes the rest.
+func outputsByInput(status *jobStatus, names []string) (outputFor map[string]string, failed []string) {
+	outputFor = map[string]string{}
+	reported := map[string]bool{}
+	for _, d := range status.JobDetails {
+		if len(d.Inputs) == 0 {
+			continue
+		}
+		in := d.Inputs[0].FileName
+		reported[in] = true
+		if d.State == "Success" && len(d.Outputs) > 0 {
+			outputFor[in] = d.Outputs[0].FileName
+			continue
+		}
+		msg := d.State
+		if d.ErrorMessage != nil {
+			msg += ": " + *d.ErrorMessage
+		}
+		failed = append(failed, in+" ("+msg+")")
+	}
+	for _, n := range names {
+		if !reported[n] {
+			failed = append(failed, n+" (no result reported)")
 		}
 	}
-	return false
+	return outputFor, failed
 }
+
+// filesFailedError means the job finished but some files had no result. The job is
+// over, so the caller should retry only those files in a new one.
+type filesFailedError struct{ Files []string }
+
+func (e *filesFailedError) Error() string { return "files failed: " + strings.Join(e.Files, "; ") }

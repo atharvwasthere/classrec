@@ -52,7 +52,7 @@ func runAgent(ctx context.Context, args []string) error {
 	defer f.Close()
 	fmt.Fprintf(os.Stderr, "logging every %s to %s; leave this window open, Ctrl+C to stop\n", *interval, path)
 
-	m := detect.Machine{Cfg: detect.DefaultConfig}
+	m := detect.NewMachine(detect.DefaultConfig)
 	enc := json.NewEncoder(f)
 	tick := time.NewTicker(*interval)
 	defer tick.Stop()
@@ -60,7 +60,7 @@ func runAgent(ctx context.Context, args []string) error {
 		s := desktop.Snapshot(time.Now())
 		line := debugLine{Sample: s, Obs: detect.Classify(s)}
 		line.Event = m.Step(s.Time, line.Obs)
-		line.Phase = m.Phase
+		line.Phase = m.Phase()
 		if err := enc.Encode(line); err != nil {
 			return err
 		}

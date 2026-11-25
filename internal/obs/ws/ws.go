@@ -34,7 +34,8 @@ const (
 	finalFrameBit = 0x80
 	maskBit       = 0x80
 
-	CloseNormal = 1000
+	// closeNormal is the close code for an orderly goodbye.
+	closeNormal = 1000
 )
 
 // CloseError is returned by ReadMessage once the peer closes the connection.
@@ -177,7 +178,7 @@ func (c *Conn) WriteText(message []byte) error {
 
 // Close sends a normal close and shuts the connection.
 func (c *Conn) Close() error {
-	return c.CloseWithCode(CloseNormal, "")
+	return c.CloseWithCode(closeNormal, "")
 }
 
 // CloseWithCode sends a close frame with code and reason, then shuts the connection.

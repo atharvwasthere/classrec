@@ -1,5 +1,5 @@
 // Package marks reads and appends the "I didn't get this" moments of a class. During a class they
-// are wall-clock times (AppendTime); `classrec process --marks` takes seconds into one video (Append, Read).
+// are wall-clock times (AppendTime); `classrec process --marks` takes seconds into one video (Read).
 package marks
 
 import (
@@ -7,7 +7,6 @@ import (
 	"errors"
 	"fmt"
 	"io/fs"
-	"math"
 	"os"
 	"time"
 
@@ -55,19 +54,6 @@ func AppendTime(path string, t time.Time) error {
 		return err
 	}
 	b, err := json.Marshal(append(times, t.Round(time.Millisecond)))
-	if err != nil {
-		return err
-	}
-	return fsx.WriteFileAtomic(path, b)
-}
-
-// Append adds sec, rounded to 0.1 s, to path, creating it if missing.
-func Append(path string, sec float64) error {
-	marks, err := Read(path)
-	if err != nil && !errors.Is(err, fs.ErrNotExist) {
-		return err
-	}
-	b, err := json.Marshal(append(marks, math.Round(sec*10)/10))
 	if err != nil {
 		return err
 	}

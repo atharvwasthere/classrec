@@ -84,7 +84,7 @@ func (h *harness) end() Class {
 }
 
 func (h *harness) staging() []string {
-	entries, _ := os.ReadDir(h.rec.Staging())
+	entries, _ := os.ReadDir(h.rec.staging())
 	var names []string
 	for _, e := range entries {
 		if isRecording(e.Name()) {
@@ -126,29 +126,32 @@ func TestEachAppIsRecordedWholeFromItsOwnScene(t *testing.T) {
 		t.Run(string(tt.target.App), func(t *testing.T) {
 			h := newHarness(t, tt.canvas[0], tt.canvas[1])
 			h.begin(tt.target)
-			st := h.fake.State()
-			scene := "classrec - " + string(tt.target.App)
-			if !st.Recording || st.Profile != ProfileName || st.Scene != scene || st.RecordDir != h.rec.Staging() {
-				t.Fatalf("state %+v", st)
-			}
-			if got := st.Inputs[scene+" video"].Settings["window"]; got != tt.wantWindow {
-				t.Errorf("window %q, want %q", got, tt.wantWindow)
-			}
-			if st.Inputs[scene+" audio"].Kind != "wasapi_process_output_capture" {
-				t.Error("no app audio capture")
-			}
-			fit := st.Transforms[scene+"/"+scene+" video"]
-			if fit["boundsType"] != "OBS_BOUNDS_SCALE_INNER" || fit["boundsWidth"] != float64(tt.canvas[0]) ||
-				fit["boundsHeight"] != float64(tt.canvas[1]) || fit["boundsAlignment"] != float64(0) {
-				t.Errorf("window not fitted to the %v canvas: %v", tt.canvas, fit)
-			}
-			if !st.Muted["Desktop Audio"] || !st.Muted["Mic/Aux"] {
-				t.Errorf("muted %v", st.Muted)
-			}
-			if p := h.rec.Problems(); len(p) > 0 {
-				t.Errorf("problems with an installed profile: %v", p)
-			}
+			checkRecordedWhole(t, h, "classrec - "+string(tt.target.App), tt.canvas, tt.wantWindow)
 		})
+	}
+}
+
+func checkRecordedWhole(t *testing.T, h *harness, scene string, canvas [2]int, wantWindow string) {
+	st := h.fake.State()
+	if !st.Recording || st.Profile != ProfileName || st.Scene != scene || st.RecordDir != h.rec.staging() {
+		t.Fatalf("state %+v", st)
+	}
+	if got := st.Inputs[scene+" video"].Settings["window"]; got != wantWindow {
+		t.Errorf("window %q, want %q", got, wantWindow)
+	}
+	if st.Inputs[scene+" audio"].Kind != "wasapi_process_output_capture" {
+		t.Error("no app audio capture")
+	}
+	fit := st.Transforms[scene+"/"+scene+" video"]
+	if fit["boundsType"] != "OBS_BOUNDS_SCALE_INNER" || fit["boundsWidth"] != float64(canvas[0]) ||
+		fit["boundsHeight"] != float64(canvas[1]) || fit["boundsAlignment"] != float64(0) {
+		t.Errorf("window not fitted to the %v canvas: %v", canvas, fit)
+	}
+	if !st.Muted["Desktop Audio"] || !st.Muted["Mic/Aux"] {
+		t.Errorf("muted %v", st.Muted)
+	}
+	if p := h.rec.Problems(); len(p) > 0 {
+		t.Errorf("problems with an installed profile: %v", p)
 	}
 }
 
@@ -283,7 +286,7 @@ func TestHeldFileIsFiledAtTheNextStart(t *testing.T) {
 	h.begin(meet)
 	h.holdFiles = true
 	class := h.end()
-	if class.Pending != 1 || len(h.staging()) != 1 || len(readPending(h.rec.Staging())) != 1 {
+	if class.Pending != 1 || len(h.staging()) != 1 || len(readPending(h.rec.staging())) != 1 {
 		t.Fatalf("class %+v, staging %v", class, h.staging())
 	}
 
@@ -314,11 +317,11 @@ func TestClassFolders(t *testing.T) {
 		{strings.Repeat("क", 70), strings.Repeat("क", 60)},
 		{strings.Repeat("a", 59) + " bbb", strings.Repeat("a", 59)},
 	} {
-		if got := SanitizeTitle(tt.in); got != tt.want {
-			t.Errorf("SanitizeTitle(%q) = %q, want %q", tt.in, got, tt.want)
+		if got := sanitizeTitle(tt.in); got != tt.want {
+			t.Errorf("sanitizeTitle(%q) = %q, want %q", tt.in, got, tt.want)
 		}
 	}
-	if got := ClassFolderName(classStart, detect.Meet, "Meet - Maths - Personal - Microsoft Edge"); got != "2026-11-25 Wednesday - Maths (Meet)" {
+	if got := classFolderName(classStart, detect.Meet, "Meet - Maths - Personal - Microsoft Edge"); got != "2026-11-25 Wednesday - Maths (Meet)" {
 		t.Errorf("folder name %q", got)
 	}
 

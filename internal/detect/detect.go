@@ -159,6 +159,7 @@ func letterAfter(text string, i int) bool {
 // Phase is where the state machine is.
 type Phase string
 
+// The phases of a class.
 const (
 	Idle      Phase = "idle"
 	Candidate Phase = "candidate"
@@ -172,11 +173,13 @@ type Config struct {
 	Grace time.Duration // recording stops only after the class has been gone this long
 }
 
+// DefaultConfig starts a class after 10 s of meeting window and ends it 5 min after every sign of it is gone.
 var DefaultConfig = Config{Hold: 10 * time.Second, Grace: 5 * time.Minute}
 
 // EventKind says whether recording should start or stop.
 type EventKind string
 
+// The two decisions.
 const (
 	Start EventKind = "start"
 	Stop  EventKind = "stop"
@@ -190,22 +193,31 @@ type Event struct {
 	Title string    `json:"title"`
 }
 
-// Machine is the detection state machine. The zero value is Idle.
+// Machine is the detection state machine.
 //
 // A class can only start from a meeting window, because Edge opens the mic for other sites too.
 // Once recording, the app's mic alone keeps it going, so a tab switch in Edge doesn't end it,
 // and the window alone keeps it going, so muting doesn't end it.
 type Machine struct {
-	Cfg   Config
-	Phase Phase
-	Since time.Time // when Candidate or Ending began
-	App   App
-	Title string
+	cfg   Config
+	phase Phase
+	since time.Time // when Candidate or Ending began
+	app   App
+	title string
 }
+
+// NewMachine returns an Idle machine with cfg's timings.
+func NewMachine(cfg Config) *Machine { return &Machine{cfg: cfg} }
+
+// Phase is where the machine is.
+func (m *Machine) Phase() Phase { return m.phase }
+
+// Class is the app and meeting window of the class being started or recorded.
+func (m *Machine) Class() (App, string) { return m.app, m.title }
 
 // Step advances the machine with one observation and returns a start or stop event, if any.
 func (m *Machine) Step(t time.Time, o Observation) *Event {
-	switch m.Phase {
+	switch m.phase {
 	case Candidate:
 		return m.stepCandidate(t, o)
 	case Recording:
@@ -222,10 +234,10 @@ func (m *Machine) stepIdle(t time.Time, o Observation) *Event {
 	if !found {
 		return nil
 	}
-	m.Phase = Candidate
-	m.Since = t
-	m.App = app
-	m.Title = title
+	m.phase = Candidate
+	m.since = t
+	m.app = app
+	m.title = title
 	return nil
 }
 
@@ -234,11 +246,11 @@ func (m *Machine) stepCandidate(t time.Time, o Observation) *Event {
 		m.reset()
 		return nil
 	}
-	heldFor := t.Sub(m.Since)
-	if heldFor < m.Cfg.Hold {
+	heldFor := t.Sub(m.since)
+	if heldFor < m.cfg.Hold {
 		return nil
 	}
-	m.Phase = Recording
+	m.phase = Recording
 	return m.event(Start, t)
 }
 
@@ -246,18 +258,18 @@ func (m *Machine) stepRecording(t time.Time, o Observation) *Event {
 	if m.classStillOn(o) {
 		return nil
 	}
-	m.Phase = Ending
-	m.Since = t
+	m.phase = Ending
+	m.since = t
 	return nil
 }
 
 func (m *Machine) stepEnding(t time.Time, o Observation) *Event {
 	if m.classStillOn(o) {
-		m.Phase = Recording
+		m.phase = Recording
 		return nil
 	}
-	goneFor := t.Sub(m.Since)
-	if goneFor < m.Cfg.Grace {
+	goneFor := t.Sub(m.since)
+	if goneFor < m.cfg.Grace {
 		return nil
 	}
 	stop := m.event(Stop, t)
@@ -266,21 +278,21 @@ func (m *Machine) stepEnding(t time.Time, o Observation) *Event {
 }
 
 func (m *Machine) event(kind EventKind, t time.Time) *Event {
-	return &Event{Kind: kind, At: t, App: m.App, Title: m.Title}
+	return &Event{Kind: kind, At: t, App: m.app, Title: m.title}
 }
 
 func (m *Machine) reset() {
-	m.Phase = Idle
-	m.Since = time.Time{}
-	m.App = ""
-	m.Title = ""
+	m.phase = Idle
+	m.since = time.Time{}
+	m.app = ""
+	m.title = ""
 }
 
 // classStillOn reports whether the class is still going: the app shows its meeting window, holds the
 // mic, or its audio is audible in OBS. Any one is enough, so a closed window with the teacher still
 // talking keeps the recording, and so does a muted mic.
 func (m *Machine) classStillOn(o Observation) bool {
-	return o.AppAudio || o.Meeting[m.App] != "" || o.Mic[m.App]
+	return o.AppAudio || o.Meeting[m.app] != "" || o.Mic[m.app]
 }
 
 // startSignal is the first app, in Apps order, showing a meeting window. Only a window starts a
@@ -294,9 +306,9 @@ func startSignal(o Observation) (app App, title string, found bool) {
 	return "", "", false
 }
 
-// Replay runs a fresh machine over samples and returns the events it produced.
-func Replay(samples []Sample, cfg Config) []Event {
-	m := Machine{Cfg: cfg}
+// replay runs a fresh machine over samples and returns the events it produced.
+func replay(samples []Sample, cfg Config) []Event {
+	m := NewMachine(cfg)
 	var events []Event
 	for _, s := range samples {
 		e := m.Step(s.Time, Classify(s))
@@ -307,8 +319,8 @@ func Replay(samples []Sample, cfg Config) []Event {
 	return events
 }
 
-// ReadJSONL reads samples written by --debug-detect. Extra fields on a line are ignored.
-func ReadJSONL(r io.Reader) ([]Sample, error) {
+// readJSONL reads samples written by --debug-detect. Extra fields on a line are ignored.
+func readJSONL(r io.Reader) ([]Sample, error) {
 	const maxLineBytes = 16 * 1024 * 1024
 	scanner := bufio.NewScanner(r)
 	scanner.Buffer(make([]byte, 0, 64*1024), maxLineBytes)

@@ -33,7 +33,7 @@ func TestResumeSkipsDoneAndRetriesFailed(t *testing.T) {
 	}
 
 	m1, _ := manifest.Load(path)
-	if err := Execute(context.Background(), m1, stages(), quiet); err == nil {
+	if err := execute(context.Background(), m1, stages(), quiet); err == nil {
 		t.Fatal("expected stage c to fail")
 	}
 
@@ -49,7 +49,7 @@ func TestResumeSkipsDoneAndRetriesFailed(t *testing.T) {
 	}
 
 	failC = false
-	if err := Execute(context.Background(), m2, stages(), quiet); err != nil {
+	if err := execute(context.Background(), m2, stages(), quiet); err != nil {
 		t.Fatal(err)
 	}
 	if calls["a"] != 1 || calls["b"] != 1 || calls["c"] != 2 {
@@ -75,12 +75,12 @@ func TestFailedVerifyRerunsThatStageAndEverythingAfter(t *testing.T) {
 		}
 	}
 	m, _ := manifest.Load(path)
-	if err := Execute(context.Background(), m, stages(), quiet); err != nil {
+	if err := execute(context.Background(), m, stages(), quiet); err != nil {
 		t.Fatal(err)
 	}
 
 	outputsOK = false
-	if err := Execute(context.Background(), m, stages(), quiet); err != nil {
+	if err := execute(context.Background(), m, stages(), quiet); err != nil {
 		t.Fatal(err)
 	}
 	if calls["a"] != 1 || calls["b"] != 2 || calls["c"] != 2 {

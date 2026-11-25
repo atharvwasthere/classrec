@@ -1,0 +1,64 @@
+version: "2"
+
+# Findings are fixed from first principles. A //nolint needs a comment saying why.
+linters:
+  default: none
+  enable:
+    - govet
+    - staticcheck
+    - unused
+    - revive
+    - gocognit
+    - funlen
+    - interfacebloat
+    - depguard
+  settings:
+    gocognit:
+      min-complexity: 20
+    funlen:
+      lines: 80
+      statements: 50
+    interfacebloat:
+      max: 6
+    revive:
+      rules:
+        - name: exported
+        - name: unexported-return
+    depguard:
+      rules:
+        # Leaf packages know nothing of the rest of classrec.
+        leaf:
+          list-mode: lax
+          files:
+            - "**/internal/detect/**"
+            - "**/internal/obs/**"
+            - "**/internal/media/**"
+            - "**/internal/transcript/**"
+          allow:
+            - classrec/internal/fsx
+            - classrec/internal/obs # obs's own websocket and fake
+          deny:
+            - pkg: classrec/internal
+              desc: detect, obs, media and transcript may import only fsx
+        recorder:
+          list-mode: lax
+          files:
+            - "**/internal/recorder/**"
+          allow:
+            - classrec/internal/fsx
+            - classrec/internal/obs
+            - classrec/internal/detect
+          deny:
+            - pkg: classrec/internal
+              desc: recorder may import only obs, detect and fsx
+        pipeline:
+          list-mode: lax
+          files:
+            - "**/internal/pipeline/**"
+          deny:
+            - pkg: classrec/internal/recorder
+              desc: the pipeline knows nothing of recording
+            - pkg: classrec/internal/overlay
+              desc: the pipeline knows nothing of the overlay
+            - pkg: classrec/internal/desktop
+              desc: the pipeline knows nothing of the desktop

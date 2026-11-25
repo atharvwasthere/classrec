@@ -60,7 +60,7 @@ type step struct {
 }
 
 func run(steps ...step) []Event {
-	m := Machine{Cfg: DefaultConfig}
+	m := NewMachine(DefaultConfig)
 	var events []Event
 	i := 0
 	for _, s := range steps {
@@ -127,11 +127,11 @@ func TestReplayKeepsClassWhileAppAudioIsLive(t *testing.T) {
 		}
 		enc.Encode(s)
 	}
-	samples, err := ReadJSONL(&log)
+	samples, err := readJSONL(&log)
 	if err != nil {
 		t.Fatal(err)
 	}
-	got := Replay(samples, DefaultConfig)
+	got := replay(samples, DefaultConfig)
 	want := []Event{{"start", at(10), Meet, meetName}, {"stop", at(1000), Meet, meetName}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v\nwant %+v", got, want)
@@ -157,12 +157,12 @@ func TestReplay(t *testing.T) {
 		if err != nil {
 			t.Fatal(err)
 		}
-		samples, err := ReadJSONL(f)
+		samples, err := readJSONL(f)
 		f.Close()
 		if err != nil {
 			t.Fatalf("%s: %v", tt.file, err)
 		}
-		got := Replay(samples, DefaultConfig)
+		got := replay(samples, DefaultConfig)
 		if len(got) != len(tt.want) {
 			t.Fatalf("%s: got %+v, want %+v", tt.file, got, tt.want)
 		}

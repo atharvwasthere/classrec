@@ -101,8 +101,8 @@ func New(cfg Config) *Recorder {
 	return &Recorder{cfg: cfg, seen: map[string]bool{}}
 }
 
-// Staging is where OBS writes while recording.
-func (r *Recorder) Staging() string { return filepath.Join(r.cfg.Root, "_staging") }
+// staging is where OBS writes while recording.
+func (r *Recorder) staging() string { return filepath.Join(r.cfg.Root, "_staging") }
 
 // Recording reports whether a class is being recorded.
 func (r *Recorder) Recording() bool {
@@ -258,19 +258,19 @@ func (r *Recorder) startPiece(ctx context.Context) error {
 
 // markStagingSeen notes the files already in staging, so only files made from now on count as pieces.
 func (r *Recorder) markStagingSeen() {
-	entries, _ := os.ReadDir(r.Staging())
+	entries, _ := os.ReadDir(r.staging())
 	for _, e := range entries {
-		r.seen[filepath.Join(r.Staging(), e.Name())] = true
+		r.seen[filepath.Join(r.staging(), e.Name())] = true
 	}
 }
 
 // unclaimedFiles lists recordings in staging that appeared during this class and were not handed
 // back by StopRecord, oldest first. OBS leaves one behind when it dies.
 func (r *Recorder) unclaimedFiles() []string {
-	entries, _ := os.ReadDir(r.Staging())
+	entries, _ := os.ReadDir(r.staging())
 	var files []os.DirEntry
 	for _, e := range entries {
-		path := filepath.Join(r.Staging(), e.Name())
+		path := filepath.Join(r.staging(), e.Name())
 		if !e.IsDir() && !r.seen[path] && isRecording(e.Name()) {
 			files = append(files, e)
 		}
@@ -285,7 +285,7 @@ func (r *Recorder) unclaimedFiles() []string {
 	sort.SliceStable(files, func(i, j int) bool { return modTime(files[i]).Before(modTime(files[j])) })
 	paths := make([]string, len(files))
 	for i, e := range files {
-		paths[i] = filepath.Join(r.Staging(), e.Name())
+		paths[i] = filepath.Join(r.staging(), e.Name())
 		r.seen[paths[i]] = true
 	}
 	return paths

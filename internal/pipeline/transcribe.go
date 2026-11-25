@@ -16,6 +16,7 @@ import (
 // maxFilesPerJob is Sarvam's documented limit for one batch job.
 const maxFilesPerJob = 20
 
+// Batcher runs a Sarvam batch job; *sarvam.Client is one.
 type Batcher interface {
 	RunBatch(ctx context.Context, req sarvam.BatchRequest) (map[string]sarvam.FileResult, error)
 }

@@ -3,6 +3,7 @@ package chunk
 
 import "classrec/internal/media"
 
+// Span is one chunk to cut from the audio, in seconds.
 type Span struct {
 	Start, Duration float64
 }

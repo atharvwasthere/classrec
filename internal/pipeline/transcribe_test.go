@@ -21,10 +21,9 @@ type fixture struct {
 
 func (f *fixture) pipeline(t *testing.T) *Pipeline {
 	t.Helper()
-	c := sarvam.New("test-key")
-	c.BaseURL, c.PollEvery = f.srv.URL, time.Millisecond
-	c.Retry = sarvam.RetryPolicy{Max: 2, Base: time.Millisecond, MaxDelay: time.Millisecond,
-		Sleep: func(context.Context, time.Duration) error { return nil }}
+	c := sarvam.NewWith("test-key", sarvam.Options{BaseURL: f.srv.URL, PollEvery: time.Millisecond,
+		Retry: sarvam.RetryPolicy{Max: 2, Base: time.Millisecond, MaxDelay: time.Millisecond,
+			Sleep: func(context.Context, time.Duration) error { return nil }}})
 	p, err := New(f.cfg, c, quiet)
 	if err != nil {
 		t.Fatal(err)

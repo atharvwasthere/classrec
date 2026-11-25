@@ -36,7 +36,7 @@ type PieceInfo struct {
 // file makes the class folder, notes when each piece began, and moves the pieces in. A piece OBS
 // still holds after moveTimeout stays in staging and goes into pending.json for RetryPending.
 func (r *Recorder) file(ctx context.Context) (Class, error) {
-	dir, err := makeClassDir(r.cfg.Root, ClassFolderName(r.began, r.target.App, r.target.Title))
+	dir, err := makeClassDir(r.cfg.Root, classFolderName(r.began, r.target.App, r.target.Title))
 	if err != nil {
 		return Class{}, fmt.Errorf("making the class folder: %w", err)
 	}
@@ -49,7 +49,7 @@ func (r *Recorder) file(ctx context.Context) (Class, error) {
 		moved, err := r.move(ctx, p.path, dst)
 		if err != nil {
 			r.cfg.Log("leaving %s in staging: %v", p.path, err)
-			if err := addPending(r.Staging(), pendingMove{Src: p.path, Dst: dst}); err != nil {
+			if err := addPending(r.staging(), pendingMove{Src: p.path, Dst: dst}); err != nil {
 				r.cfg.Log("could not note the pending move: %v", err)
 			}
 			class.Pending++
@@ -67,7 +67,7 @@ func (r *Recorder) file(ctx context.Context) (Class, error) {
 // RetryPending moves files an earlier run left in staging. The agent calls it when it starts.
 func (r *Recorder) RetryPending(ctx context.Context) (moved, still int) {
 	var keep []pendingMove
-	for _, p := range readPending(r.Staging()) {
+	for _, p := range readPending(r.staging()) {
 		if _, err := os.Stat(p.Src); err != nil {
 			continue // already filed, or moved by hand
 		}
@@ -78,7 +78,7 @@ func (r *Recorder) RetryPending(ctx context.Context) (moved, still int) {
 		}
 		moved++
 	}
-	if err := writePending(r.Staging(), keep); err != nil {
+	if err := writePending(r.staging(), keep); err != nil {
 		r.cfg.Log("could not update the pending list: %v", err)
 	}
 	return moved, len(keep)
@@ -153,18 +153,18 @@ func addPending(staging string, m pendingMove) error {
 	return writePending(staging, append(readPending(staging), m))
 }
 
-// ClassFolderName is "<YYYY-MM-DD> <Day> - <title> (<Zoom|Meet>)".
-func ClassFolderName(began time.Time, app detect.App, windowTitle string) string {
-	return fmt.Sprintf("%s %s - %s (%s)", began.Format("2006-01-02"), began.Weekday(), SanitizeTitle(windowTitle), app)
+// classFolderName is "<YYYY-MM-DD> <Day> - <title> (<Zoom|Meet>)".
+func classFolderName(began time.Time, app detect.App, windowTitle string) string {
+	return fmt.Sprintf("%s %s - %s (%s)", began.Format("2006-01-02"), began.Weekday(), sanitizeTitle(windowTitle), app)
 }
 
-// SanitizeTitle turns a meeting window title into a short, safe folder name part: the "Meet - "
+// sanitizeTitle turns a meeting window title into a short, safe folder name part: the "Meet - "
 // and "Zoom Meeting" boilerplate, Edge's suffix and the profile name before it are dropped;
 // \ / : * ? " < > | and control characters are removed; spaces are collapsed; dots, spaces and
 // dashes are trimmed from the ends; at most 60 characters are kept; empty becomes "Class".
-func SanitizeTitle(title string) string {
+func sanitizeTitle(title string) string {
 	parts := strings.Split(title, " - ")
-	last := strings.ReplaceAll(strings.TrimSpace(parts[len(parts)-1]), "​", "") // Edge writes "Microsoft​ Edge"
+	last := strings.ReplaceAll(strings.TrimSpace(parts[len(parts)-1]), "\u200b", "") // Edge writes "Microsoft\u200b Edge"
 	edge := strings.EqualFold(last, "Microsoft Edge")
 	if edge {
 		parts = parts[:len(parts)-1]

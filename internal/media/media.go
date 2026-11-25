@@ -20,6 +20,7 @@ import (
 	"time"
 )
 
+// Silence is a quiet stretch of audio, in seconds.
 type Silence struct {
 	Start, End float64
 }
@@ -118,6 +119,7 @@ func parseSilences(stderr string) []Silence {
 	return res
 }
 
+// DetectSilences lists the stretches of audio quieter than noiseDB for at least minDur seconds.
 func DetectSilences(ctx context.Context, audio string, noiseDB, minDur float64) ([]Silence, error) {
 	filter := fmt.Sprintf("silencedetect=noise=%gdB:d=%g", noiseDB, minDur)
 	_, stderr, err := run(ctx, "ffmpeg", "-v", "info", "-nostats", "-i", audio, "-af", filter, "-f", "null", "-")
@@ -169,6 +171,7 @@ func ProbeClean(ctx context.Context, path string) (float64, error) {
 	return dur, nil
 }
 
+// SHA256File is the hex SHA-256 of the file at path.
 func SHA256File(path string) (string, error) {
 	f, err := os.Open(path)
 	if err != nil {

@@ -14,12 +14,9 @@ import (
 const testKey = "sk-test-key-123"
 
 func newTestClient(srv *sarvamtest.Server) *Client {
-	c := New(testKey)
-	c.BaseURL = srv.URL
-	c.PollEvery = time.Millisecond
-	c.Retry = RetryPolicy{Max: 3, Base: time.Millisecond, MaxDelay: time.Millisecond,
-		Sleep: func(context.Context, time.Duration) error { return nil }}
-	return c
+	return NewWith(testKey, Options{BaseURL: srv.URL, PollEvery: time.Millisecond,
+		Retry: RetryPolicy{Max: 3, Base: time.Millisecond, MaxDelay: time.Millisecond,
+			Sleep: func(context.Context, time.Duration) error { return nil }}})
 }
 
 func writeFiles(t *testing.T, names ...string) []BatchFile {

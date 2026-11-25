@@ -40,11 +40,11 @@ func runRecordLoop(ctx context.Context, opts recordOptions) error {
 		logf("files left in staging by an earlier run: %d filed, %d still stuck", moved, still)
 	}
 
-	machine := detect.Machine{Cfg: detect.DefaultConfig}
+	machine := detect.NewMachine(detect.DefaultConfig)
 	tick := time.NewTicker(opts.Interval)
 	defer tick.Stop()
 	for {
-		step(ctx, &machine, rec, opts, logf)
+		step(ctx, machine, rec, opts, logf)
 		select {
 		case <-ctx.Done():
 			if rec.Recording() {
@@ -77,9 +77,10 @@ func step(ctx context.Context, machine *detect.Machine, rec *recorder.Recorder, 
 		if err := rec.Tick(ctx); err != nil {
 			logf("could not keep the recording going: %v", err)
 		}
-	case machine.Phase == detect.Recording || machine.Phase == detect.Ending:
+	case machine.Phase() == detect.Recording || machine.Phase() == detect.Ending:
 		// the class is on but a start failed earlier: try again
-		beginClass(ctx, rec, targetFor(machine.App, machine.Title, sample), logf)
+		app, title := machine.Class()
+		beginClass(ctx, rec, targetFor(app, title, sample), logf)
 	}
 }
 

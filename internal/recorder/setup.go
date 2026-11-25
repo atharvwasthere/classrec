@@ -71,7 +71,7 @@ func (r *Recorder) setUp(ctx context.Context) []string {
 	canvas, drift, err := useProfile(ctx, r.client, r.cfg.Sleep, r.cfg.ProfileDir)
 	problems = append(problems, drift...)
 	note("profile", err)
-	note("record folder", setRecordFolder(ctx, r.client, r.Staging()))
+	note("record folder", setRecordFolder(ctx, r.client, r.staging()))
 	audio, err := setUpScene(ctx, r.client, r.target, canvas)
 	note("scene", err)
 	if audio != "" {
