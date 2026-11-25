@@ -307,18 +307,22 @@ func (r *Recorder) connect(ctx context.Context, launch bool) error {
 		return nil
 	}
 	r.drop()
-	if launch && !r.cfg.OBSRunning() {
-		r.cfg.Log("obs is not running; starting it")
-		if err := r.cfg.LaunchOBS(); err != nil {
-			return fmt.Errorf("starting obs: %w", err)
-		}
-	}
 	attempts := connectAttempts
 	if !launch {
 		attempts = 5
 	}
+	launched := false
 	var lastErr error
 	for range attempts {
+		// checked on every try: an OBS that was dying a moment ago is gone now, and every second
+		// spent dialling it is a second of class not recorded
+		if launch && !launched && !r.cfg.OBSRunning() {
+			r.cfg.Log("obs is not running; starting it")
+			if err := r.cfg.LaunchOBS(); err != nil {
+				return fmt.Errorf("starting obs: %w", err)
+			}
+			launched = true
+		}
 		client, err := r.cfg.Dial(ctx)
 		if err == nil {
 			r.client = client

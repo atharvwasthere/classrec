@@ -29,6 +29,7 @@ type harness struct {
 	root string
 
 	running   bool // obs64.exe is running
+	dying     bool // obs64.exe still shows but refuses the next connection, then is gone
 	failDial  bool // OBS refuses connections
 	holdFiles bool // OBS keeps its files open, so renames fail
 	launches  int
@@ -46,6 +47,10 @@ func newHarness(t *testing.T, canvasW, canvasH int) *harness {
 	h.rec = New(Config{
 		Root: h.root,
 		Dial: func(ctx context.Context) (*obs.Client, error) {
+			if h.dying {
+				h.dying, h.running = false, false
+				return nil, errors.New("connection refused")
+			}
 			if h.failDial {
 				return nil, errors.New("connection refused")
 			}
@@ -187,12 +192,12 @@ func TestOBSKilledMidClassGivesTwoPiecesInOneFolder(t *testing.T) {
 	h.begin(meet)
 	h.now = classStart.Add(12 * time.Minute)
 	h.fake.Kill()
-	h.running = false
+	h.dying = true // obs64.exe is still in the process list for a moment after it is killed
 	if err := h.rec.Tick(context.Background()); err != nil {
 		t.Fatal(err)
 	}
 	if h.launches != 1 || !h.fake.State().Recording {
-		t.Fatalf("launches %d, recording %v", h.launches, h.fake.State().Recording)
+		t.Fatalf("launches %d, recording %v: a dying OBS must be relaunched in the same Tick", h.launches, h.fake.State().Recording)
 	}
 
 	class := h.end()
