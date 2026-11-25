@@ -8,6 +8,7 @@ import (
 	"os"
 	"path/filepath"
 	"strings"
+	"sync"
 	"time"
 
 	"classrec/internal/fsx"
@@ -111,7 +112,17 @@ type pendingMove struct {
 
 const pendingFile = "pending.json"
 
+// pendingMu serializes changes to pending.json: classes filed on different goroutines and the
+// start-up retry all edit it.
+var pendingMu sync.Mutex
+
 func readPending(staging string) []pendingMove {
+	pendingMu.Lock()
+	defer pendingMu.Unlock()
+	return readPendingLocked(staging)
+}
+
+func readPendingLocked(staging string) []pendingMove {
 	content, err := os.ReadFile(filepath.Join(staging, pendingFile))
 	if err != nil {
 		return nil
@@ -123,7 +134,7 @@ func readPending(staging string) []pendingMove {
 	return list
 }
 
-func writePending(staging string, list []pendingMove) error {
+func writePendingLocked(staging string, list []pendingMove) error {
 	content, err := json.MarshalIndent(list, "", "  ")
 	if err != nil {
 		return err
@@ -132,11 +143,30 @@ func writePending(staging string, list []pendingMove) error {
 }
 
 func addPending(staging string, m pendingMove) error {
-	list := readPending(staging)
+	pendingMu.Lock()
+	defer pendingMu.Unlock()
+	list := readPendingLocked(staging)
 	for _, p := range list {
 		if p == m {
 			return nil
 		}
 	}
-	return writePending(staging, append(list, m))
+	return writePendingLocked(staging, append(list, m))
+}
+
+// removePending drops entries that no longer need a retry, because they were filed or their file is gone.
+func removePending(staging string, done []pendingMove) error {
+	pendingMu.Lock()
+	defer pendingMu.Unlock()
+	var keep []pendingMove
+	for _, p := range readPendingLocked(staging) {
+		finished := false
+		for _, d := range done {
+			finished = finished || p == d
+		}
+		if !finished {
+			keep = append(keep, p)
+		}
+	}
+	return writePendingLocked(staging, keep)
 }

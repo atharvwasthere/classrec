@@ -32,10 +32,9 @@ func runOverlayDemo(ctx context.Context, args []string) error {
 	}
 
 	marksPath := filepath.Join(*dir, "marks.json")
-	start := time.Now()
 	o, err := overlay.New(overlay.Config{
 		SettingsPath: settingsPath(),
-		OnMark:       func() error { return marks.Append(marksPath, time.Since(start).Seconds()) },
+		OnMark:       func() error { return marks.AppendTime(marksPath, time.Now()) },
 	})
 	if err != nil {
 		return err

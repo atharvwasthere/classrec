@@ -35,14 +35,14 @@ func OBSRunning() bool {
 // LauncherFor returns a function that starts OBS from binDir minimized to the tray. OBS must run
 // with its own bin folder as the working directory or it cannot find its data files.
 // --disable-shutdown-check stops OBS asking about safe mode after it has crashed, a question nobody
-// is there to answer.
+// is there to answer. --disable-updater stops OBS's update prompt from covering the screen mid-class.
 func LauncherFor(binDir string) func() error {
 	return func() error {
 		exe := filepath.Join(binDir, "obs64.exe")
 		if _, err := os.Stat(exe); err != nil {
 			return fmt.Errorf("obs is not at %s: %w", exe, err)
 		}
-		cmd := exec.Command(exe, "--minimize-to-tray", "--disable-shutdown-check")
+		cmd := exec.Command(exe, "--minimize-to-tray", "--disable-shutdown-check", "--disable-updater")
 		cmd.Dir = binDir
 		if err := cmd.Start(); err != nil {
 			return err

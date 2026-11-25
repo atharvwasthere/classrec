@@ -29,6 +29,8 @@ type OBS interface {
 	CreateInput(ctx context.Context, scene, name, kind string, settings map[string]any) error
 	SetInputSettings(ctx context.Context, name string, settings map[string]any) error
 	SetCurrentScene(ctx context.Context, name string) error
+	SceneItemID(ctx context.Context, scene, source string) (int, error)
+	SetSceneItemTransform(ctx context.Context, scene string, itemID int, transform map[string]any) error
 	SetRecordDirectory(ctx context.Context, dir string) error
 	RecordDirectory(ctx context.Context) (string, error)
 	Profiles(ctx context.Context) ([]string, string, error)
@@ -36,6 +38,7 @@ type OBS interface {
 	SetCurrentProfile(ctx context.Context, name string) error
 	SetProfileParameter(ctx context.Context, category, name, value string) error
 	ProfileParameter(ctx context.Context, category, name string) (string, error)
+	Monitors(ctx context.Context) ([]obs.Monitor, error)
 	SetVideoSettings(ctx context.Context, v obs.VideoSettings) error
 	VideoSettings(ctx context.Context) (obs.VideoSettings, error)
 	SetInputMute(ctx context.Context, name string, muted bool) error
@@ -81,21 +84,55 @@ type Class struct {
 	Pending int      // pieces still in staging because they could not be moved
 }
 
-// Recorder records one class at a time. Its methods are safe from any goroutine.
+// Filing is a class being moved into its folder in the background.
+type Filing struct {
+	Dir   string // the class folder, which already exists
+	done  chan struct{}
+	class Class
+}
+
+// Done is closed when every piece is filed or has been left in staging for a later retry.
+func (f *Filing) Done() <-chan struct{} { return f.done }
+
+// Class waits for the filing to finish and returns what it did.
+func (f *Filing) Class() Class {
+	<-f.done
+	return f.class
+}
+
+type piece struct {
+	Path  string
+	Start time.Time // wall clock, when OBS began writing it
+}
+
+// Recorder records one class at a time.
+//
+// Two locks keep it responsive. opMu makes Begin, Tick and End run one at a time, and is held
+// while talking to OBS, which can take a while (reconnecting, relaunching OBS). mu guards the
+// few fields other goroutines read, is held only for an instant, and never across I/O, so
+// AppAudioLive and Recording answer immediately even mid-reconnect. Filing a class runs on its
+// own goroutine holding neither, so the next class can begin while the last one is still moving.
 type Recorder struct {
 	cfg Config
 
-	mu       sync.Mutex
-	client   OBS
-	problems []string // settings OBS did not take, from the last ApplyProfile
+	opMu sync.Mutex
 
+	mu        sync.Mutex
+	client    OBS
 	active    bool
-	target    Target
-	began     time.Time
-	pieces    []string        // finished recording files, in order
-	seen      map[string]bool // staging files that are not part of this class, or already counted
-	restarts  int
 	audioName string // OBS input whose level shows the class is audible
+	problems  []string
+
+	// below: only used with opMu held
+	target   Target
+	began    time.Time
+	curStart time.Time
+	pieces   []piece         // finished recording files, in order
+	seen     map[string]bool // staging files that are not part of this class, or already counted
+	canvasW  int             // base canvas of the current profile
+	canvasH  int
+
+	filings sync.WaitGroup
 }
 
 // New returns a recorder for cfg, with defaults filled in.
@@ -130,7 +167,7 @@ func New(cfg Config) *Recorder {
 // Staging is where OBS writes while recording.
 func (r *Recorder) Staging() string { return filepath.Join(r.cfg.Root, "_staging") }
 
-// Problems lists the settings OBS did not take the last time the profile was applied.
+// Problems lists the settings OBS did not take the last time a recording was set up.
 func (r *Recorder) Problems() []string {
 	r.mu.Lock()
 	defer r.mu.Unlock()
@@ -144,39 +181,50 @@ func (r *Recorder) Recording() bool {
 	return r.active
 }
 
-// Begin sets OBS up for the target and starts recording. A second Begin while a class is in
-// progress is an error.
-func (r *Recorder) Begin(ctx context.Context, t Target) error {
+func (r *Recorder) setActive(active bool) {
+	r.mu.Lock()
+	r.active = active
+	r.mu.Unlock()
+}
+
+func (r *Recorder) currentClient() OBS {
 	r.mu.Lock()
 	defer r.mu.Unlock()
-	if r.active {
+	return r.client
+}
+
+// Begin sets OBS up for the target and starts recording. A setting OBS refuses is logged and
+// listed in Problems, never a reason not to record; only StartRecord failing is an error.
+func (r *Recorder) Begin(ctx context.Context, t Target) error {
+	r.opMu.Lock()
+	defer r.opMu.Unlock()
+	if r.Recording() {
 		return errors.New("a class is already being recorded")
 	}
-	if err := r.connect(ctx); err != nil {
+	if err := r.connect(ctx, true, r.cfg.ConnectAttempts); err != nil {
 		return err
 	}
 	r.target = t
 	r.began = r.cfg.Now()
 	r.pieces = nil
-	r.restarts = 0
 	r.seen = map[string]bool{}
 	if err := r.startPiece(ctx); err != nil {
 		return err
 	}
-	r.active = true
+	r.setActive(true)
 	return nil
 }
 
 // Tick checks that OBS is still recording and puts it right if not: it reconnects after a dropped
 // connection, and if OBS is gone it starts OBS again and records a new piece of the same class.
 func (r *Recorder) Tick(ctx context.Context) error {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if !r.active {
+	r.opMu.Lock()
+	defer r.opMu.Unlock()
+	if !r.Recording() {
 		return nil
 	}
-	if r.client != nil && r.client.Err() == nil && r.cfg.OBSRunning() {
-		status, err := r.client.RecordStatus(ctx)
+	if client := r.currentClient(); client != nil && client.Err() == nil && r.cfg.OBSRunning() {
+		status, err := client.RecordStatus(ctx)
 		if err == nil && status.Active {
 			return nil
 		}
@@ -189,37 +237,47 @@ func (r *Recorder) Tick(ctx context.Context) error {
 func (r *Recorder) recover(ctx context.Context) error {
 	r.cfg.Log("recording stopped unexpectedly; recovering")
 	r.dropClient()
-	if err := r.connect(ctx); err != nil {
+	if err := r.connect(ctx, true, r.cfg.ConnectAttempts); err != nil {
 		return err
 	}
-	status, err := r.client.RecordStatus(ctx)
+	status, err := r.currentClient().RecordStatus(ctx)
 	if err == nil && status.Active {
 		r.cfg.Log("obs is still recording; only the connection was lost")
 		return nil
 	}
-	r.pieces = append(r.pieces, r.unclaimedFiles()...)
-	r.restarts++
+	for _, path := range r.unclaimedFiles() {
+		r.pieces = append(r.pieces, piece{path, r.curStart})
+	}
 	return r.startPiece(ctx)
 }
 
-// End stops recording and files the pieces. It returns even if OBS is gone, with whatever the
-// recording left in staging.
-func (r *Recorder) End(ctx context.Context) (Class, error) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	if !r.active {
-		return Class{}, errors.New("no class is being recorded")
+// End stops recording and starts filing the pieces in the background; it returns as soon as the
+// class folder exists. If the connection to OBS dropped it reconnects, without launching OBS, to
+// stop the recording properly; only if OBS is really gone does it take the files from staging.
+func (r *Recorder) End(ctx context.Context) (*Filing, error) {
+	r.opMu.Lock()
+	defer r.opMu.Unlock()
+	if !r.Recording() {
+		return nil, errors.New("no class is being recorded")
 	}
-	r.active = false
+
+	client := r.currentClient()
+	if (client == nil || client.Err() != nil) && r.cfg.OBSRunning() {
+		r.dropClient()
+		if err := r.connect(ctx, false, 5); err != nil {
+			r.cfg.Log("could not reconnect to stop the recording: %v", err)
+		}
+		client = r.currentClient()
+	}
 
 	var stopErr error
 	gotPath := false
-	if r.client != nil && r.client.Err() == nil {
-		path, err := r.client.StopRecord(ctx)
+	if client != nil && client.Err() == nil {
+		path, err := client.StopRecord(ctx)
 		var refused *obs.RequestError
 		switch {
 		case err == nil && path != "":
-			r.pieces = append(r.pieces, path)
+			r.pieces = append(r.pieces, piece{path, r.curStart})
 			r.seen[path] = true
 			gotPath = true
 		case errors.As(err, &refused) && refused.Code == codeOutputNotRunning:
@@ -230,64 +288,58 @@ func (r *Recorder) End(ctx context.Context) (Class, error) {
 	}
 	if !gotPath {
 		// OBS gave no path (it is gone, or was stopped by hand): take what it left in staging
-		r.pieces = append(r.pieces, r.unclaimedFiles()...)
+		for _, path := range r.unclaimedFiles() {
+			r.pieces = append(r.pieces, piece{path, r.curStart})
+		}
 	}
-	class := r.file(ctx)
+	r.setActive(false)
+
 	if stopErr != nil {
 		// OBS died or hung up as we stopped. What it wrote is filed all the same.
 		r.cfg.Log("stopping the recording: %v", stopErr)
-		if len(r.pieces) == 0 {
-			return class, fmt.Errorf("stopping the recording: %w", stopErr)
-		}
 	}
-	return class, nil
+	if len(r.pieces) == 0 {
+		done := make(chan struct{})
+		close(done)
+		err := errors.New("obs left no recording behind")
+		if stopErr != nil {
+			err = fmt.Errorf("stopping the recording: %w", stopErr)
+		}
+		return &Filing{done: done}, err
+	}
+	return r.startFiling(ctx, r.target, r.began, append([]piece(nil), r.pieces...))
 }
 
-// file moves the pieces into the class folder. Pieces that cannot be moved stay in staging and are
-// remembered for RetryPending.
-func (r *Recorder) file(ctx context.Context) Class {
-	var class Class
-	if len(r.pieces) == 0 {
-		return class
+// Wait blocks until every class being filed in the background is done, or ctx ends.
+func (r *Recorder) Wait(ctx context.Context) {
+	finished := make(chan struct{})
+	go func() { r.filings.Wait(); close(finished) }()
+	select {
+	case <-finished:
+	case <-ctx.Done():
 	}
-	day := r.began.Format("2006-01-02")
-	class.Dir = filepath.Join(r.cfg.Root, day, fmt.Sprintf("%s %s", r.began.Format("2006-01-02 15-04-05"), r.target.App))
-	for i, src := range r.pieces {
-		dst := filepath.Join(class.Dir, fmt.Sprintf("part-%02d%s", i+1, filepath.Ext(src)))
-		moved, err := moveFile(ctx, src, dst, r.moveOptions())
-		if err != nil {
-			r.cfg.Log("leaving %s in staging: %v", src, err)
-			if perr := addPending(r.Staging(), pendingMove{Src: src, Dst: dst}); perr != nil {
-				r.cfg.Log("could not note the pending move: %v", perr)
-			}
-			class.Pending++
-			continue
-		}
-		class.Files = append(class.Files, moved)
-	}
-	return class
 }
 
 // RetryPending tries again to move files an earlier run left in staging. Call it when the agent starts.
 func (r *Recorder) RetryPending(ctx context.Context) (moved, still int) {
-	r.mu.Lock()
-	defer r.mu.Unlock()
-	var remaining []pendingMove
+	var finished []pendingMove
 	for _, p := range readPending(r.Staging()) {
 		if _, err := os.Stat(p.Src); err != nil {
-			continue // already filed or removed by hand; nothing to retry
+			finished = append(finished, p) // already filed or removed by hand; nothing to retry
+			continue
 		}
 		if _, err := moveFile(ctx, p.Src, p.Dst, r.moveOptions()); err != nil {
 			r.cfg.Log("still cannot move %s: %v", p.Src, err)
-			remaining = append(remaining, p)
+			still++
 			continue
 		}
+		finished = append(finished, p)
 		moved++
 	}
-	if err := writePending(r.Staging(), remaining); err != nil {
+	if err := removePending(r.Staging(), finished); err != nil {
 		r.cfg.Log("could not update the pending list: %v", err)
 	}
-	return moved, len(remaining)
+	return moved, still
 }
 
 func (r *Recorder) moveOptions() MoveOptions {
@@ -314,33 +366,44 @@ func (r *Recorder) AppAudioLive() bool {
 	return level.DB > r.cfg.SilenceDB
 }
 
-// startPiece sets OBS up and starts a recording. The caller holds r.mu and has a connected client.
+// startPiece sets OBS up and starts a recording. Every setup step may fail without stopping the
+// recording: a class recorded with the wrong scene or an unmuted mic is worth more than none.
+// Only StartRecord failing, or OBS not reporting a recording afterwards, is an error.
 func (r *Recorder) startPiece(ctx context.Context) error {
-	problems, err := r.ApplyProfile(ctx)
-	if err != nil {
-		return err
+	var problems []string
+	note := func(what string, err error) {
+		problem := what + ": " + err.Error()
+		r.cfg.Log("obs setup problem, recording anyway: %s", problem)
+		problems = append(problems, problem)
 	}
-	r.problems = problems
-	for _, p := range problems {
-		r.cfg.Log("obs setting: %s", p)
+	profileProblems, err := r.ApplyProfile(ctx)
+	problems = append(problems, profileProblems...)
+	if err != nil {
+		note("profile", err)
 	}
 	if err := r.setRecordDirectory(ctx); err != nil {
-		return err
+		note("record folder", err)
 	}
 	if err := r.setUpScene(ctx); err != nil {
-		return err
+		note("scene", err)
 	}
 	if err := r.muteGlobalAudio(ctx); err != nil {
-		return err
+		note("muting desktop and mic audio", err)
 	}
+	r.mu.Lock()
+	r.problems = problems
+	r.mu.Unlock()
+
 	r.markExistingFilesSeen()
-	if err := r.client.StartRecord(ctx); err != nil {
+	client := r.currentClient()
+	if err := client.StartRecord(ctx); err != nil {
 		return fmt.Errorf("starting the recording: %w", err)
 	}
-	status, err := r.client.RecordStatus(ctx)
+	status, err := client.RecordStatus(ctx)
 	if err != nil || !status.Active {
 		return fmt.Errorf("obs says it is not recording after StartRecord (status %+v, error %v)", status, err)
 	}
+	r.curStart = r.cfg.Now()
 	return nil
 }
 
@@ -350,10 +413,11 @@ func (r *Recorder) setRecordDirectory(ctx context.Context) error {
 	if err := os.MkdirAll(staging, 0o755); err != nil {
 		return err
 	}
-	if err := r.client.SetRecordDirectory(ctx, staging); err != nil {
+	client := r.currentClient()
+	if err := client.SetRecordDirectory(ctx, staging); err != nil {
 		return fmt.Errorf("setting the record folder: %w", err)
 	}
-	got, err := r.client.RecordDirectory(ctx)
+	got, err := client.RecordDirectory(ctx)
 	if err != nil {
 		return err
 	}
@@ -369,18 +433,21 @@ func samePath(a, b string) bool {
 }
 
 // muteGlobalAudio silences Desktop Audio and Mic/Aux: they belong to every scene, so a scene
-// cannot leave them out, and they would add room noise and echo to the class.
+// cannot leave them out, and they would add room noise and echo to the class. It tries every
+// input and reports the first failure.
 func (r *Recorder) muteGlobalAudio(ctx context.Context) error {
-	names, err := r.client.GlobalAudioInputs(ctx)
+	client := r.currentClient()
+	names, err := client.GlobalAudioInputs(ctx)
 	if err != nil {
 		return fmt.Errorf("finding the global audio inputs: %w", err)
 	}
+	var first error
 	for _, name := range names {
-		if err := r.client.SetInputMute(ctx, name, true); err != nil {
-			return fmt.Errorf("muting %s: %w", name, err)
+		if err := client.SetInputMute(ctx, name, true); err != nil && first == nil {
+			first = fmt.Errorf("muting %s: %w", name, err)
 		}
 	}
-	return nil
+	return first
 }
 
 // markExistingFilesSeen notes the recordings already in staging, so only files made from now on count as pieces.
@@ -435,16 +502,17 @@ func isRecording(name string) bool {
 	return false
 }
 
-// connect makes r.client a live connection, starting OBS first if it is not running.
-func (r *Recorder) connect(ctx context.Context) error {
-	if r.client != nil && r.client.Err() == nil {
+// connect makes the client a live connection. With launch set it starts OBS first if OBS is not
+// running. It holds no lock while it waits, so the rest of the agent keeps running.
+func (r *Recorder) connect(ctx context.Context, launch bool, attempts int) error {
+	if c := r.currentClient(); c != nil && c.Err() == nil {
 		return nil
 	}
 	r.dropClient()
 	launched := false
 	var lastErr error
-	for attempt := 0; attempt < r.cfg.ConnectAttempts; attempt++ {
-		if !launched && !r.cfg.OBSRunning() {
+	for attempt := 0; attempt < attempts; attempt++ {
+		if launch && !launched && !r.cfg.OBSRunning() {
 			r.cfg.Log("obs is not running; starting it")
 			if err := r.cfg.LaunchOBS(); err != nil {
 				return fmt.Errorf("starting obs: %w", err)
@@ -453,7 +521,9 @@ func (r *Recorder) connect(ctx context.Context) error {
 		}
 		client, err := r.cfg.Dial(ctx)
 		if err == nil {
+			r.mu.Lock()
 			r.client = client
+			r.mu.Unlock()
 			return nil
 		}
 		if errors.Is(err, obs.ErrAuthFailed) {
@@ -468,8 +538,11 @@ func (r *Recorder) connect(ctx context.Context) error {
 }
 
 func (r *Recorder) dropClient() {
-	if r.client != nil {
-		r.client.Close()
-		r.client = nil
+	r.mu.Lock()
+	client := r.client
+	r.client = nil
+	r.mu.Unlock()
+	if client != nil {
+		client.Close()
 	}
 }

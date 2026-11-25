@@ -57,6 +57,12 @@ type Server struct {
 	muted         map[string]bool
 	specialInputs map[string]string
 
+	monitorW, monitorH int
+	failing            map[string]bool           // request types that always fail
+	itemIDs            map[string]int            // "scene/input" -> scene item id
+	transforms         map[string]map[string]any // "scene/input" -> scene item transform
+	nextItemID         int
+
 	scenes       map[string]bool
 	sceneOrder   []string
 	inputs       map[string]*Input
@@ -73,6 +79,10 @@ func New(password string) *Server {
 		video:         map[string]any{"fpsNumerator": 30, "fpsDenominator": 1, "baseWidth": 1920, "baseHeight": 1080, "outputWidth": 1920, "outputHeight": 1080},
 		muted:         map[string]bool{},
 		specialInputs: map[string]string{"desktop1": "Desktop Audio", "mic1": "Mic/Aux"},
+		monitorW:      1920, monitorH: 1080,
+		failing:    map[string]bool{},
+		itemIDs:    map[string]int{},
+		transforms: map[string]map[string]any{},
 	}
 	s.srv = httptest.NewServer(http.HandlerFunc(s.serve))
 	return s
@@ -110,6 +120,33 @@ func (s *Server) Recording() bool {
 	s.mu.Lock()
 	defer s.mu.Unlock()
 	return s.recording
+}
+
+// SetMonitor sets the size of the primary display GetMonitorList reports.
+func (s *Server) SetMonitor(width, height int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.monitorW, s.monitorH = width, height
+}
+
+// FailRequests makes every later request of these types fail, as when OBS refuses them.
+func (s *Server) FailRequests(types ...string) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	for _, t := range types {
+		s.failing[t] = true
+	}
+}
+
+// SceneItemTransform returns what was set on the input's scene item, nil if nothing was.
+func (s *Server) SceneItemTransform(scene, input string) map[string]any {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	out := map[string]any{}
+	for k, v := range s.transforms[scene+"/"+input] {
+		out[k] = v
+	}
+	return out
 }
 
 // Kill imitates obs64.exe dying: every connection drops and the recording is lost,
@@ -301,7 +338,46 @@ func (s *Server) handleRequest(requestType string, requestData json.RawMessage) 
 		InputSettings map[string]any `json:"inputSettings"`
 	}
 	json.Unmarshal(requestData, &in) // absent or odd data leaves the zero value, like a missing field
+	if s.failing[requestType] {
+		return false, codeResourceNotFound, nil
+	}
 	switch requestType {
+	case "GetMonitorList":
+		return true, success, map[string]any{"monitors": []any{map[string]any{
+			"monitorIndex": 0, "monitorName": "Fake display",
+			"monitorWidth": s.monitorW, "monitorHeight": s.monitorH,
+			"monitorPositionX": 0, "monitorPositionY": 0,
+		}}}
+	case "GetSceneItemId":
+		var q struct {
+			Scene  string `json:"sceneName"`
+			Source string `json:"sourceName"`
+		}
+		json.Unmarshal(requestData, &q)
+		id, ok := s.itemIDs[q.Scene+"/"+q.Source]
+		if !ok {
+			return false, codeResourceNotFound, nil
+		}
+		return true, success, map[string]any{"sceneItemId": id}
+	case "SetSceneItemTransform":
+		var q struct {
+			Scene     string         `json:"sceneName"`
+			ItemID    int            `json:"sceneItemId"`
+			Transform map[string]any `json:"sceneItemTransform"`
+		}
+		json.Unmarshal(requestData, &q)
+		for key, id := range s.itemIDs {
+			if id == q.ItemID && strings.HasPrefix(key, q.Scene+"/") {
+				if s.transforms[key] == nil {
+					s.transforms[key] = map[string]any{}
+				}
+				for k, v := range q.Transform {
+					s.transforms[key][k] = v
+				}
+				return true, success, nil
+			}
+		}
+		return false, codeResourceNotFound, nil
 	case "GetSceneList":
 		scenes := []any{}
 		for _, name := range s.sceneOrder {
@@ -330,7 +406,9 @@ func (s *Server) handleRequest(requestType string, requestData json.RawMessage) 
 		}
 		s.inputs[in.InputName] = &Input{Scene: in.SceneName, Kind: in.InputKind, Settings: in.InputSettings}
 		s.inputOrder = append(s.inputOrder, in.InputName)
-		return true, success, nil
+		s.nextItemID++
+		s.itemIDs[in.SceneName+"/"+in.InputName] = s.nextItemID
+		return true, success, map[string]any{"sceneItemId": s.nextItemID}
 	case "SetInputSettings":
 		input, exists := s.inputs[in.InputName]
 		if !exists {

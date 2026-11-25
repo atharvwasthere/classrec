@@ -280,6 +280,47 @@ func (c *Client) VideoSettings(ctx context.Context) (VideoSettings, error) {
 	return v, err
 }
 
+// Monitor is one display as OBS sees it, in pixels.
+type Monitor struct {
+	Width, Height int
+	X, Y          int
+}
+
+// Monitors lists the displays OBS sees.
+func (c *Client) Monitors(ctx context.Context) ([]Monitor, error) {
+	var response struct {
+		Monitors []struct {
+			Width  int `json:"monitorWidth"`
+			Height int `json:"monitorHeight"`
+			X      int `json:"monitorPositionX"`
+			Y      int `json:"monitorPositionY"`
+		} `json:"monitors"`
+	}
+	if err := c.call(ctx, "GetMonitorList", nil, &response); err != nil {
+		return nil, err
+	}
+	monitors := make([]Monitor, 0, len(response.Monitors))
+	for _, m := range response.Monitors {
+		monitors = append(monitors, Monitor{Width: m.Width, Height: m.Height, X: m.X, Y: m.Y})
+	}
+	return monitors, nil
+}
+
+// SceneItemID finds the id of a source's item in a scene.
+func (c *Client) SceneItemID(ctx context.Context, scene, source string) (int, error) {
+	var response struct {
+		ID int `json:"sceneItemId"`
+	}
+	err := c.call(ctx, "GetSceneItemId", map[string]any{"sceneName": scene, "sourceName": source}, &response)
+	return response.ID, err
+}
+
+// SetSceneItemTransform changes the given fields of a scene item's transform, e.g. "boundsType".
+func (c *Client) SetSceneItemTransform(ctx context.Context, scene string, itemID int, transform map[string]any) error {
+	data := map[string]any{"sceneName": scene, "sceneItemId": itemID, "sceneItemTransform": transform}
+	return c.call(ctx, "SetSceneItemTransform", data, nil)
+}
+
 // SetInputMute mutes or unmutes an input everywhere it is used.
 func (c *Client) SetInputMute(ctx context.Context, name string, muted bool) error {
 	return c.call(ctx, "SetInputMute", map[string]any{"inputName": name, "inputMuted": muted}, nil)

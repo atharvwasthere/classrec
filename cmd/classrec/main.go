@@ -18,6 +18,7 @@ import (
 
 const usage = `usage: classrec process <video> [flags]
        classrec agent [--debug-detect] [--interval 10s] [--mode record|full] [--root <folder>] [--obs-url ws://localhost:4455]
+       classrec record-test [--app meet|zoom] [--seconds 30]   (records a clip with the real OBS)
        classrec overlay-demo [--dir <folder for marks.json>] [--status normal|amber|red]
 
   --out <dir>          output directory (default ./out/<video name>)
@@ -48,6 +49,8 @@ func run(args []string) error {
 			return runProcess(ctx, args)
 		case "agent":
 			return runAgent(ctx, args[1:])
+		case "record-test":
+			return runRecordTest(ctx, args[1:])
 		case "overlay-demo":
 			return runOverlayDemo(ctx, args[1:])
 		}

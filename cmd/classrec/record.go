@@ -31,24 +31,10 @@ func runRecordLoop(ctx context.Context, opts recordOptions) error {
 	}
 	defer closeLog()
 
-	password, err := readOBSPassword()
+	rec, err := newRecorder(opts.Root, opts.OBSURL, logf)
 	if err != nil {
 		return err
 	}
-	rec := recorder.New(recorder.Config{
-		Root:       opts.Root,
-		ProfileDir: obsProfileDir(recorder.DefaultProfileName),
-		Dial: func(ctx context.Context) (recorder.OBS, error) {
-			client, err := obs.Connect(ctx, opts.OBSURL, password)
-			if err != nil {
-				return nil, err
-			}
-			return client, nil
-		},
-		OBSRunning: recorder.OBSRunning,
-		LaunchOBS:  recorder.LauncherFor(recorder.DefaultOBSBin),
-		Log:        logf,
-	})
 	logf("agent started: mode %s (%s), recordings in %s", opts.Mode.Mode, opts.Mode.Source, opts.Root)
 
 	if moved, still := rec.RetryPending(ctx); moved+still > 0 {
@@ -105,25 +91,58 @@ func endClass(ctx context.Context, rec *recorder.Recorder, opts recordOptions, l
 	if !rec.Recording() {
 		return
 	}
-	class, err := rec.End(ctx)
+	filing, err := rec.End(ctx)
 	if err != nil {
 		logf("problem stopping the recording: %v", err)
 	}
-	logf("class filed in %s: %d file(s), %d left in staging", class.Dir, len(class.Files), class.Pending)
-	if opts.Mode.Mode == modeFull {
-		logf("mode is full, but transcribing after a class is not wired in yet; nothing was sent to Sarvam")
-	}
-}
-
-// finishOnExit stops a recording in progress when the agent is told to quit, so the file is closed properly.
-func finishOnExit(rec *recorder.Recorder, opts recordOptions, logf func(string, ...any)) {
-	if !rec.Recording() {
+	if filing == nil || filing.Dir == "" {
 		return
 	}
-	logf("agent stopping during a class; stopping the recording")
+	logf("class recording ended; filing it into %s", filing.Dir)
+	go func() {
+		class := filing.Class() // returns when every piece is filed or parked in staging
+		logf("class filed in %s: %d file(s), %d left in staging", class.Dir, len(class.Files), class.Pending)
+		if opts.Mode.Mode == modeFull {
+			logf("mode is full, but transcribing after a class is not wired in yet; nothing was sent to Sarvam")
+		}
+	}()
+}
+
+// finishOnExit stops a recording in progress when the agent is told to quit, so the file is closed
+// properly, then gives filing a minute to finish. Anything not moved by then is retried at the next start.
+func finishOnExit(rec *recorder.Recorder, opts recordOptions, logf func(string, ...any)) {
 	ctx, cancel := context.WithTimeout(context.Background(), 2*time.Minute)
 	defer cancel()
-	endClass(ctx, rec, opts, logf)
+	if rec.Recording() {
+		logf("agent stopping during a class; stopping the recording")
+		endClass(ctx, rec, opts, logf)
+	}
+	waitCtx, stopWaiting := context.WithTimeout(ctx, time.Minute)
+	defer stopWaiting()
+	rec.Wait(waitCtx)
+}
+
+// newRecorder builds the recorder the agent and record-test share: OBS at url, with its password
+// from the .obs-password file next to classrec.
+func newRecorder(root, url string, logf func(string, ...any)) (*recorder.Recorder, error) {
+	password, err := readOBSPassword()
+	if err != nil {
+		return nil, err
+	}
+	return recorder.New(recorder.Config{
+		Root:       root,
+		ProfileDir: obsProfileDir(recorder.DefaultProfileName),
+		Dial: func(ctx context.Context) (recorder.OBS, error) {
+			client, err := obs.Connect(ctx, url, password)
+			if err != nil {
+				return nil, err
+			}
+			return client, nil
+		},
+		OBSRunning: recorder.OBSRunning,
+		LaunchOBS:  recorder.LauncherFor(recorder.DefaultOBSBin),
+		Log:        logf,
+	}), nil
 }
 
 // targetFor finds the meeting window the event named, to tell OBS which window to capture.
