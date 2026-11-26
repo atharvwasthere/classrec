@@ -63,10 +63,23 @@ func runRecordLoop(ctx context.Context, opts recordOptions) error {
 		log.printf("files left in staging by an earlier run: %d filed, %d still stuck", moved, still)
 	}
 
+	updates, err := newUpdater(log.printf)
+	if err != nil {
+		return err
+	}
+	lastUpdateCheck := time.Now().Add(-updateEvery + 10*time.Minute) // first look 10 min after start
 	tick := time.NewTicker(opts.Interval)
 	defer tick.Stop()
 	for {
 		a.step(ctx)
+		if a.machine.Phase() == detect.Idle && time.Since(lastUpdateCheck) >= updateEvery {
+			lastUpdateCheck = time.Now()
+			if updated, err := updates.update(ctx); err != nil {
+				log.printf("update check: %v", err)
+			} else if updated {
+				return errUpdated
+			}
+		}
 		select {
 		case <-ctx.Done():
 			if rec.Recording() {

@@ -62,7 +62,7 @@ jobs:
         with:
           go-version-file: go.mod
       - name: Build classrec.exe
-        run: GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w" -o classrec.exe ./cmd/classrec
+        run: GOOS=windows GOARCH=amd64 go build -trimpath -ldflags="-s -w -X main.version=$GITHUB_REF_NAME" -o classrec.exe ./cmd/classrec
       - name: Checksum
         run: sha256sum classrec.exe > classrec.exe.sha256
       - name: Publish release

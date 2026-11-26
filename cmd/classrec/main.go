@@ -38,7 +38,12 @@ const usage = `usage: classrec process <video or class folder> [flags]
 //go:generate go run ../../tools/winres classrec.manifest rsrc_windows_amd64.syso
 
 func main() {
-	if err := run(os.Args[1:]); err != nil {
+	err := run(os.Args[1:])
+	if errors.Is(err, errUpdated) {
+		fmt.Fprintln(os.Stderr, err)
+		os.Exit(exitUpdated)
+	}
+	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
 		os.Exit(1)
 	}
