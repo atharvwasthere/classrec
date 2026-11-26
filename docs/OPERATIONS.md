@@ -1,7 +1,8 @@
 # Operating classrec
 
 classrec runs on the student's Windows 11 laptop. It notices a class (a Zoom meeting window, or a
-Google Meet tab in Edge), records it with OBS, and files the recording in
+Google Meet tab in Edge) and shows a small card with a **Record this class** button. Nothing is
+recorded unless she clicks it; if she does, it records with OBS until the class ends and files it in
 `C:\Users\Admin\Class Recordings\<date> <day> - <title> (<Zoom|Meet>)\`. In mode `full` it also
 makes a Hindi/Hinglish transcript with Sarvam.
 
@@ -42,8 +43,8 @@ recordings or transcripts.
 4. **The laptop updates itself within a day.** Once a day, when no class is on, the agent fetches
    the latest release, checks its sha256, keeps the running exe as `classrec.prev.exe`, and runs
    the new exe's selftest. If the selftest fails it puts the old exe back (the new one stays as
-   `classrec.bad.exe`); if it passes, the agent exits and Task Scheduler restarts it on the new
-   exe a minute later. The update shows in `logs\agent-<date>.log` ("updated from … to …").
+   `classrec.bad.exe`); if it passes, the agent queues a fresh run of its scheduled task and exits,
+   and Task Scheduler starts it again on the new exe straight away. The update shows in `logs\agent-<date>.log` ("updated from … to …").
 
 ## Roll back by hand
 
@@ -81,7 +82,7 @@ transcribe a single class by hand with `classrec process "<class folder>"`.
 `%APPDATA%\obs-studio\basic\profiles\classrec\` with MKV, QuickSync H.264, CBR 1000 kbps,
 2 s keyframes, the screen as canvas, 1280×720 at 15 fps, recording into `Class Recordings\_staging`.
 
-During a class the agent:
+During a class she chose to record, the agent:
 
 - switches OBS to the classrec profile;
 - creates and selects the scenes **classrec - Meet** and **classrec - Zoom** (a window capture and

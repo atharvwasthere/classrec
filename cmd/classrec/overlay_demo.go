@@ -23,6 +23,7 @@ var demoStates = []struct {
 	{"amber", overlay.Amber, chargerText, false},
 	{"red", overlay.Red, notHearing, false},
 	{"saved", overlay.Normal, "", true},
+	{"offer", overlay.Offer, "Zoom class detected", false},
 }
 
 // runOverlayDemo writes a PNG of every state, in both themes, next to classrec, then shows the
@@ -49,7 +50,7 @@ func runOverlayDemo(ctx context.Context, args []string) error {
 		}
 	}
 	if !found {
-		return fmt.Errorf("--state must be green, amber, red or saved, not %q", *state)
+		return fmt.Errorf("--state must be green, amber, red, saved or offer, not %q", *state)
 	}
 	fmt.Fprintf(os.Stderr, "wrote %s\n", filepath.Join(exeDir(), "overlay-*.png"))
 

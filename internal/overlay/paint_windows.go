@@ -29,6 +29,7 @@ const (
 type palette struct {
 	card, text, button, buttonHover, buttonPressed, buttonEdge, hover uint32
 	green, amber, red, saved, notSaved                                uint32
+	accent, onAccent                                                  uint32 // the "Record this class" button and its label
 }
 
 var (
@@ -36,11 +37,13 @@ var (
 		card: 0xFF2B2B2B, text: 0xFFFFFFFF,
 		button: 0x0FFFFFFF, buttonHover: 0x1AFFFFFF, buttonPressed: 0x08FFFFFF, buttonEdge: 0x14FFFFFF, hover: 0x14FFFFFF,
 		green: 0xFF6CCB5F, amber: 0xFFFFB900, red: 0xFFC42B1C, saved: 0xFF6CCB5F, notSaved: 0xFFFF99A4,
+		accent: 0xFF60CDFF, onAccent: 0xFF000000,
 	}
 	lightPalette = palette{
 		card: 0xFFF3F3F3, text: 0xFF1B1B1B,
 		button: 0xB3FFFFFF, buttonHover: 0xFFFFFFFF, buttonPressed: 0x80F9F9F9, buttonEdge: 0x0F000000, hover: 0x0A000000,
 		green: 0xFF0F7B0F, amber: 0xFFC27C0E, red: 0xFFC42B1C, saved: 0xFF0F7B0F, notSaved: 0xFFC42B1C,
+		accent: 0xFF005FB8, onAccent: 0xFFFFFFFF,
 	}
 )
 
@@ -81,6 +84,8 @@ func (s scene) stateColor() uint32 {
 		return p.amber
 	case Red:
 		return p.red
+	case Offer:
+		return p.accent
 	}
 	return p.green
 }
@@ -149,6 +154,12 @@ func (s scene) drawStatus(c *canvas, px func(int32) float32) {
 
 func (s scene) drawButton(c *canvas, px func(int32) float32) {
 	p := s.palette()
+	r := buttonArea
+	x, y, w, h := px(r.Left), px(r.Top), px(r.width()), px(r.height())
+	if s.level == Offer {
+		s.drawRecordButton(c, x, y, w, h, px(radius), px(buttonSize))
+		return
+	}
 	fill := p.button
 	switch {
 	case s.pressed == partButton:
@@ -156,8 +167,6 @@ func (s scene) drawButton(c *canvas, px func(int32) float32) {
 	case s.hot == partButton:
 		fill = p.buttonHover
 	}
-	r := buttonArea
-	x, y, w, h := px(r.Left), px(r.Top), px(r.width()), px(r.height())
 	c.roundRect(x, y, w, h, px(radius), p.buttonEdge)
 	c.roundRect(x+1, y+1, w-2, h-2, px(radius)-1, fill)
 
@@ -212,8 +221,11 @@ func (o *Overlay) paint() {
 // background, for reviewing the look without a class.
 func RenderPNG(path string, level Level, text string, saved, dark bool, scale float32) error {
 	s := scene{level: level, text: text, dark: dark}
-	if level == Normal {
+	switch {
+	case level == Normal:
 		s.text = normalText
+	case level == Offer && text == "":
+		s.text = offerText
 	}
 	if saved {
 		s.flash, s.flashOK, s.flashAlpha = flashSaved, true, 1
@@ -238,4 +250,19 @@ type bitmapInfo struct {
 	XPelsPerMeter, YPelsPerMeter int32
 	ClrUsed, ClrImportant        uint32
 	_                            [4]byte // one RGBQUAD, unused for 32-bit
+}
+
+// drawRecordButton is the offer's one call to action: a solid accent button, a little lighter
+// under the pointer and darker while pressed.
+func (s scene) drawRecordButton(c *canvas, x, y, w, h, r, size float32) {
+	p := s.palette()
+	fill := p.accent
+	switch {
+	case s.pressed == partButton:
+		fill = alpha(fill, 0.8)
+	case s.hot == partButton:
+		fill = alpha(fill, 0.9)
+	}
+	c.roundRect(x, y, w, h, r, fill)
+	c.text(recordText, x, y, w, h, size, true, true, p.onAccent)
 }

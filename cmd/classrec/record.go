@@ -7,6 +7,7 @@ import (
 	"path/filepath"
 	"runtime"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"classrec/internal/desktop"
@@ -26,7 +27,8 @@ type recordOptions struct {
 	OBSURL   string
 }
 
-// agent is the record loop's state: it watches for classes and records them with OBS.
+// agent is the record loop's state: it watches for classes, offers to record each one, and
+// records with OBS the ones she says yes to.
 type agent struct {
 	opts    recordOptions
 	rec     *recorder.Recorder
@@ -35,6 +37,9 @@ type agent struct {
 	pill    *overlay.Overlay // nil if the overlay could not start
 	warn    *warnings        // nil between classes
 	level   overlay.Level
+	// wanted is set when she clicks "Record this class", on the overlay's thread, and cleared
+	// when the class ends. Only a wanted class is recorded.
+	wanted atomic.Bool
 }
 
 // runRecordLoop records classes until ctx ends.
@@ -54,9 +59,9 @@ func runRecordLoop(ctx context.Context, opts recordOptions) error {
 		return err
 	}
 	a := &agent{opts: opts, rec: rec, machine: detect.NewMachine(detect.DefaultConfig), log: log}
-	a.pill, err = overlay.New(overlay.Config{SettingsPath: settingsPath(), OnMark: a.mark})
+	a.pill, err = overlay.New(overlay.Config{SettingsPath: settingsPath(), OnMark: a.mark, OnRecord: a.record})
 	if err != nil {
-		log.printf("no overlay: %v", err)
+		log.printf("no overlay, so every class records without asking: %v", err)
 	}
 	log.printf("agent started: mode %s (%s), recordings in %s, silence below %.0f dB", opts.Mode.Mode, opts.Mode.Source, opts.Root, silenceDB())
 	if moved, still := rec.RetryPending(ctx); moved+still > 0 {
@@ -74,9 +79,7 @@ func runRecordLoop(ctx context.Context, opts recordOptions) error {
 		a.step(ctx)
 		if a.machine.Phase() == detect.Idle && time.Since(lastUpdateCheck) >= updateEvery {
 			lastUpdateCheck = time.Now()
-			if updated, err := updates.update(ctx); err != nil {
-				log.printf("update check: %v", err)
-			} else if updated {
+			if a.update(ctx, updates) {
 				return errUpdated
 			}
 		}
@@ -94,6 +97,22 @@ func runRecordLoop(ctx context.Context, opts recordOptions) error {
 	}
 }
 
+// update installs a newer release, if there is one, and queues a run of the scheduled task behind
+// this one, so the agent starts again on the new exe as soon as it exits. It reports whether to exit.
+func (a *agent) update(ctx context.Context, updates *updater) bool {
+	updated, err := updates.update(ctx)
+	if err != nil {
+		a.log.printf("update check: %v", err)
+		return false
+	}
+	if updated {
+		if err := schtasks(ctx, "/Run", "/TN", taskName); err != nil {
+			a.log.printf("could not queue the restart; the agent starts again at next logon: %v", err)
+		}
+	}
+	return updated
+}
+
 // step takes one look at the desktop and acts on it.
 func (a *agent) step(ctx context.Context) {
 	sample := desktop.Snapshot(time.Now())
@@ -107,17 +126,37 @@ func (a *agent) step(ctx context.Context) {
 	case event != nil && event.Kind == detect.Stop:
 		a.endClass(ctx)
 	case event != nil && event.Kind == detect.Start:
-		a.log.printf("class detected: %s %q", event.App, event.Title)
-		a.beginClass(ctx, targetFor(event.App, event.Title, sample))
+		a.offerClass(event.App, event.Title)
 	case a.rec.Recording():
 		if err := a.rec.Tick(ctx); err != nil {
 			a.log.printf("could not keep the recording going: %v", err)
 		}
 		a.updatePill(ctx, sample)
-	case a.machine.Phase() == detect.Recording || a.machine.Phase() == detect.Ending:
-		app, title := a.machine.Class() // the class is on but a start failed earlier: try again
+	case a.wanted.Load() && (a.machine.Phase() == detect.Recording || a.machine.Phase() == detect.Ending):
+		app, title := a.machine.Class() // she asked to record it, or a start failed earlier: (re)try
 		a.beginClass(ctx, targetFor(app, title, sample))
 	}
+}
+
+// offerClass shows the card with "Record this class". Nothing records until she clicks it; without
+// an overlay there is no way to ask, so the class records as if she had.
+func (a *agent) offerClass(app detect.App, title string) {
+	a.log.printf("class detected: %s %q; asking whether to record", app, title)
+	a.wanted.Store(a.pill == nil) // also drops a click that came as the last class ended
+	if a.pill == nil {
+		return
+	}
+	a.pill.SetStatus(overlay.Offer, string(app)+" class detected")
+	a.pill.Show()
+}
+
+// record is her "Record this class" click. It runs on the overlay's thread, so it only flags the
+// class; the next step starts the recording.
+func (a *agent) record() {
+	if a.wanted.Swap(true) {
+		return // a second click
+	}
+	a.pill.SetStatus(overlay.Offer, "Starting the recording…")
 }
 
 func (a *agent) beginClass(ctx context.Context, target recorder.Target) {
@@ -137,11 +176,15 @@ func (a *agent) beginClass(ctx context.Context, target recorder.Target) {
 }
 
 func (a *agent) endClass(ctx context.Context) {
-	if !a.rec.Recording() {
-		return
-	}
+	wanted := a.wanted.Swap(false)
 	if a.pill != nil {
 		a.pill.Hide()
+	}
+	if !a.rec.Recording() {
+		if !wanted {
+			a.log.printf("class ended; not recorded, as she did not ask")
+		}
+		return
 	}
 	desktop.KeepAwake(false)
 	a.warn = nil

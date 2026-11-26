@@ -14,6 +14,8 @@ import (
 const (
 	windowClassName = "classrec.overlay"
 	normalText      = "Recording class"
+	offerText       = "Class detected"
+	recordText      = "Record this class"
 
 	flashTimerID  = 1
 	flashTickMs   = 40
@@ -75,10 +77,14 @@ func (o *Overlay) Show() { o.post(wmAppShow) }
 // Hide hides the overlay.
 func (o *Overlay) Hide() { o.post(wmAppHide) }
 
-// SetStatus changes the status line; Normal ignores text and shows "Recording class".
+// SetStatus changes the status line; Normal ignores text and shows "Recording class", and Offer
+// shows "Class detected" when text is empty.
 func (o *Overlay) SetStatus(level Level, text string) {
-	if level == Normal {
+	switch {
+	case level == Normal:
 		text = normalText
+	case level == Offer && text == "":
+		text = offerText
 	}
 	o.statusMu.Lock()
 	o.level, o.text = level, text
@@ -229,6 +235,9 @@ func wndProc(hwnd, message, wParam, lParam uintptr) uintptr {
 		o.applyTheme()
 		o.invalidate()
 	case wmAppShow:
+		if o.collapsed { // a new class opens the full card, so the button can be seen
+			o.setCollapsed(false)
+		}
 		procSetWindowPos.Call(hwnd, hwndTopmost, 0, 0, 0, 0, swpNoMove|swpNoSize|swpNoActivate)
 		procShowWindow.Call(hwnd, swShowNoActivate)
 	case wmAppHide:
@@ -295,6 +304,10 @@ func (o *Overlay) onLeftButtonUp(p point) {
 		o.setCollapsed(false)
 	case dragging:
 		_ = savePosition(o.cfg.SettingsPath, o.windowPosition()) // a lost position is only a nuisance
+	case pressed == partButton && released == partButton && o.scene().level == Offer:
+		if o.cfg.OnRecord != nil {
+			o.cfg.OnRecord()
+		}
 	case pressed == partButton && released == partButton:
 		o.markMoment()
 	case pressed == partCollapse && released == partCollapse:
@@ -402,7 +415,7 @@ func cursorPosition() point {
 	return p
 }
 
-// ButtonCenter is the middle of the "I didn't get this" button on screen, for the selftest's click.
+// ButtonCenter is the middle of the card's button on screen, for the selftest's click.
 func (o *Overlay) ButtonCenter() (x, y int32) {
 	at := o.windowPosition()
 	r := buttonArea

@@ -12,11 +12,13 @@ import (
 // Level is the pill's state.
 type Level int
 
-// The pill's states: all well, a warning, and a problem someone must fix now.
+// The pill's states: all well, a warning, a problem someone must fix now, and a class she may
+// choose to record.
 const (
 	Normal Level = iota
 	Amber
 	Red
+	Offer // a class is on and not recording; the button records it
 )
 
 func (l Level) String() string {
@@ -25,6 +27,8 @@ func (l Level) String() string {
 		return "amber"
 	case Red:
 		return "red"
+	case Offer:
+		return "offer"
 	}
 	return "green"
 }
@@ -32,7 +36,8 @@ func (l Level) String() string {
 // Config wires the overlay to its surroundings.
 type Config struct {
 	SettingsPath string       // where the dragged position is remembered
-	OnMark       func() error // called on the UI thread when the button is clicked
+	OnMark       func() error // called on the UI thread when "I didn't get this" is clicked
+	OnRecord     func()       // called on the UI thread when "Record this class" is clicked
 }
 
 type point struct{ X, Y int32 }
