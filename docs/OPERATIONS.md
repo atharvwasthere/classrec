@@ -16,7 +16,7 @@ The installed agent lives in `C:\classrec\` and is always a tagged release, neve
 | Agent logs (two weeks), detect logs, selftest reports | `C:\classrec\logs\` |
 | Classes: `part-01.mkv`…, `pieces.json`, `marks.json`, `class.log`, `transcript\` | `D:\Class Recordings\<class>\` |
 | Recordings in progress, and pieces OBS still held at the end of a class | `…\Class Recordings\_staging\` (`pending.json` lists the held ones; they are filed at the next start) |
-| Reports for remote debugging | `%OneDrive%\classrec-reports\`, else `…\Class Recordings\_reports\` |
+| Reports for remote debugging | `D:\Class Recordings\_reports\` |
 
 Reports are selftest results, per-class logs and detect logs. Detect logs keep only Zoom and Edge
 windows; every other window title is stripped before the log is written. Reports never contain
@@ -33,7 +33,7 @@ recordings or transcripts.
 
 ## Fix a bug from Claude Code on the web
 
-1. **Read the report.** Open the latest files in `%OneDrive%\classrec-reports\`: `selftest-*.txt`,
+1. **Read the report.** Open the latest files in `D:\Class Recordings\_reports\`: `selftest-*.txt`,
    `class <class>.log` and `detect-<date>.jsonl`. A detect log replays in tests: copy it to
    `internal/detect/testdata/`, add its expected events to `TestReplay`, and it reproduces the bug.
 2. **Fix it** in a cloud session on `atharvwasthere/classrec`. CI (vet, lint, tests on Linux and
