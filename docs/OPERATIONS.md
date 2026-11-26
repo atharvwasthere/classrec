@@ -3,7 +3,7 @@
 classrec runs on the student's Windows 11 laptop. It notices a class (a Zoom meeting window, or a
 Google Meet tab in Edge) and shows a small card with a **Record this class** button. Nothing is
 recorded unless she clicks it; if she does, it records with OBS until the class ends and files it in
-`C:\Users\Admin\Class Recordings\<date> <day> - <title> (<Zoom|Meet>)\`. In mode `full` it also
+`D:\Class Recordings\<date> <day> - <title> (<Zoom|Meet>)\`. In mode `full` it also
 makes a Hindi/Hinglish transcript with Sarvam.
 
 The installed agent lives in `C:\classrec\` and is always a tagged release, never a dev build.
@@ -14,7 +14,7 @@ The installed agent lives in `C:\classrec\` and is always a tagged release, neve
 |---|---|
 | Agent, ffmpeg, ffprobe, `.env` (Sarvam key), `.obs-password`, `settings.json` | `C:\classrec\` |
 | Agent logs (two weeks), detect logs, selftest reports | `C:\classrec\logs\` |
-| Classes: `part-01.mkv`…, `pieces.json`, `marks.json`, `class.log`, `transcript\` | `C:\Users\Admin\Class Recordings\<class>\` |
+| Classes: `part-01.mkv`…, `pieces.json`, `marks.json`, `class.log`, `transcript\` | `D:\Class Recordings\<class>\` |
 | Recordings in progress, and pieces OBS still held at the end of a class | `…\Class Recordings\_staging\` (`pending.json` lists the held ones; they are filed at the next start) |
 | Reports for remote debugging | `%OneDrive%\classrec-reports\`, else `…\Class Recordings\_reports\` |
 
@@ -26,7 +26,7 @@ recordings or transcripts.
 
 ```powershell
 .\classrec.exe selftest            # PASS/FAIL per check; writes logs\selftest-<time>.txt
-.\classrec.exe process "C:\Users\Admin\Class Recordings\<class>"   # transcript for one class (calls Sarvam)
+.\classrec.exe process "D:\Class Recordings\<class>"   # transcript for one class (calls Sarvam)
 .\classrec.exe calibrate "<class>\part-01.mkv"                     # set the silence threshold from a real class
 .\classrec.exe overlay-demo --state red                            # see the pill without a class
 ```

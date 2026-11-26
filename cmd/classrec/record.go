@@ -18,7 +18,7 @@ import (
 	"classrec/internal/recorder"
 )
 
-const defaultRoot = `C:\Users\Admin\Class Recordings`
+const defaultRoot = `D:\Class Recordings` // on D:, so classes never fill the system drive
 
 type recordOptions struct {
 	Mode     modeChoice

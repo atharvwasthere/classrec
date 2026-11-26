@@ -29,7 +29,7 @@ const (
 
 // Config says where things are and how to reach OBS.
 type Config struct {
-	Root       string // where classes are filed, e.g. C:\Users\Admin\Class Recordings
+	Root       string // where classes are filed, e.g. D:\Class Recordings
 	ProfileDir string // the classrec profile's folder, to check recordEncoder.json; "" skips it
 
 	Dial       func(ctx context.Context) (*obs.Client, error)
