@@ -195,12 +195,17 @@ func (s *Server) SendLevel(inputName string, mul float64) {
 
 func (s *Server) serve(w http.ResponseWriter, r *http.Request) {
 	conn, err := ws.Accept(w, r)
-	if err != nil || !s.handshake(conn) {
+	if err != nil {
 		return
 	}
+	// Tracked before the handshake: a test may call DropConnections the moment Identified
+	// arrives, and a connection added after that would escape it.
 	s.mu.Lock()
 	s.conns = append(s.conns, conn)
 	s.mu.Unlock()
+	if !s.handshake(conn) {
+		return
+	}
 	for {
 		raw, err := conn.ReadMessage()
 		if err != nil {
