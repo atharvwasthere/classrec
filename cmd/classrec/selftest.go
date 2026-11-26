@@ -9,11 +9,11 @@ import (
 	"os/user"
 	"path/filepath"
 	"strings"
+	"sync/atomic"
 	"time"
 
 	"classrec/internal/desktop"
 	"classrec/internal/detect"
-	"classrec/internal/marks"
 	"classrec/internal/media"
 	"classrec/internal/overlay"
 	"classrec/internal/recorder"
@@ -78,26 +78,24 @@ func boolErr(ok bool, why string) error {
 	return errors.New(why)
 }
 
-// checkOverlayFocus shows the overlay, clicks its button like a person would, and checks that
-// the foreground window did not change and the click was saved as a mark.
+// checkOverlayFocus shows the "Record this class" card, clicks its button like a person would,
+// and checks that the foreground window did not change and the click arrived.
 func checkOverlayFocus(context.Context) (string, error) {
-	marksPath := filepath.Join(os.TempDir(), "classrec-selftest-marks.json")
-	_ = os.Remove(marksPath) // the selftest's own scratch file
-	defer os.Remove(marksPath)
-	o, err := overlay.New(overlay.Config{OnMark: func() error { return marks.AppendTime(marksPath, time.Now()) }})
+	var clicked atomic.Bool
+	o, err := overlay.New(overlay.Config{OnRecord: func() { clicked.Store(true) }})
 	if err != nil {
 		return "", err
 	}
 	defer o.Close()
+	o.SetStatus(overlay.Offer, "")
 	o.Show()
 	time.Sleep(700 * time.Millisecond)
 	x, y := o.ButtonCenter()
 	before, after := clickAt(x, y)
-	times, _ := marks.ReadTimes(marksPath)
 	if before != after {
 		return "", errors.New("the click moved the focus")
 	}
-	return fmt.Sprintf("%d mark saved", len(times)), boolErr(len(times) == 1, "the click was not saved")
+	return "", boolErr(clicked.Load(), "the click on Record this class did not arrive")
 }
 
 // checkOBS records 10 s into a scratch folder and checks the file has video and audio. It

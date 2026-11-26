@@ -6,10 +6,11 @@ import (
 
 // Layout in logical pixels (1/96 inch); the scale turns them into the monitor's pixels.
 const (
-	cardW, cardH = 240, 110
-	tabW, tabH   = 10, 56 // the collapsed edge tab
-	edgeMargin   = 16     // between the card and the screen edge
-
+	cardW       = 240
+	statusH     = 52     // the card while recording: the status row alone
+	offerH      = 110    // the card while offering a class: the status row and "Record this class"
+	tabW, tabH  = 10, 56 // the collapsed edge tab
+	edgeMargin  = 16     // between the card and the screen edge
 	pad         = 12
 	rowTop      = 10
 	rowH        = 32
@@ -27,22 +28,20 @@ const (
 
 // palette is the colours of one system theme, as ARGB.
 type palette struct {
-	card, text, button, buttonHover, buttonPressed, buttonEdge, hover uint32
-	green, amber, red, saved, notSaved                                uint32
-	accent, onAccent                                                  uint32 // the "Record this class" button and its label
+	card, text, hover uint32
+	green, amber, red uint32
+	accent, onAccent  uint32 // the "Record this class" button and its label
 }
 
 var (
 	darkPalette = palette{
-		card: 0xFF2B2B2B, text: 0xFFFFFFFF,
-		button: 0x0FFFFFFF, buttonHover: 0x1AFFFFFF, buttonPressed: 0x08FFFFFF, buttonEdge: 0x14FFFFFF, hover: 0x14FFFFFF,
-		green: 0xFF6CCB5F, amber: 0xFFFFB900, red: 0xFFC42B1C, saved: 0xFF6CCB5F, notSaved: 0xFFFF99A4,
+		card: 0xFF2B2B2B, text: 0xFFFFFFFF, hover: 0x14FFFFFF,
+		green: 0xFF6CCB5F, amber: 0xFFFFB900, red: 0xFFC42B1C,
 		accent: 0xFF60CDFF, onAccent: 0xFF000000,
 	}
 	lightPalette = palette{
-		card: 0xFFF3F3F3, text: 0xFF1B1B1B,
-		button: 0xB3FFFFFF, buttonHover: 0xFFFFFFFF, buttonPressed: 0x80F9F9F9, buttonEdge: 0x0F000000, hover: 0x0A000000,
-		green: 0xFF0F7B0F, amber: 0xFFC27C0E, red: 0xFFC42B1C, saved: 0xFF0F7B0F, notSaved: 0xFFC42B1C,
+		card: 0xFFF3F3F3, text: 0xFF1B1B1B, hover: 0x0A000000,
+		green: 0xFF0F7B0F, amber: 0xFFC27C0E, red: 0xFFC42B1C,
 		accent: 0xFF005FB8, onAccent: 0xFFFFFFFF,
 	}
 )
@@ -58,16 +57,13 @@ const (
 
 // scene is everything the card shows at one moment.
 type scene struct {
-	level      Level
-	text       string
-	dark       bool
-	backdrop   bool // the card's own background is left clear for Windows' acrylic
-	collapsed  bool
-	hot        part // under the pointer
-	pressed    part
-	flash      string  // "Saved ✓" or "Not saved" on the button, "" when none
-	flashOK    bool    //
-	flashAlpha float32 // 1 → 0 as the flash fades
+	level     Level
+	text      string
+	dark      bool
+	backdrop  bool // the card's own background is left clear for Windows' acrylic
+	collapsed bool
+	hot       part // under the pointer
+	pressed   part
 }
 
 func (s scene) palette() palette {
@@ -92,10 +88,13 @@ func (s scene) stateColor() uint32 {
 
 // size is the window size in logical pixels.
 func (s scene) size() (w, h int32) {
-	if s.collapsed {
+	switch {
+	case s.collapsed:
 		return tabW, tabH
+	case s.level == Offer:
+		return cardW, offerH
 	}
-	return cardW, cardH
+	return cardW, statusH
 }
 
 // Hit areas in logical pixels.
@@ -108,7 +107,7 @@ func (s scene) partAt(p point) part {
 	switch {
 	case s.collapsed:
 		return partNone
-	case buttonArea.contains(p):
+	case s.level == Offer && buttonArea.contains(p):
 		return partButton
 	case collapseArea.contains(p):
 		return partCollapse
@@ -130,7 +129,10 @@ func (s scene) draw(c *canvas, scale float32) {
 		return
 	}
 	s.drawStatus(c, px)
-	s.drawButton(c, px)
+	if s.level == Offer {
+		r := buttonArea
+		s.drawRecordButton(c, px(r.Left), px(r.Top), px(r.width()), px(r.height()), px(radius), px(buttonSize))
+	}
 }
 
 func (s scene) drawStatus(c *canvas, px func(int32) float32) {
@@ -150,35 +152,6 @@ func (s scene) drawStatus(c *canvas, px func(int32) float32) {
 	// "–": a 10 x 1.5 bar, drawn rather than typed so it sits exactly in the middle
 	cx, cy := px((collapseArea.Left+collapseArea.Right)/2), px((collapseArea.Top+collapseArea.Bottom)/2)
 	c.roundRect(cx-px(glyphW)/2, cy-px(3)/4, px(glyphW), px(3)/2, px(3)/4, textColor)
-}
-
-func (s scene) drawButton(c *canvas, px func(int32) float32) {
-	p := s.palette()
-	r := buttonArea
-	x, y, w, h := px(r.Left), px(r.Top), px(r.width()), px(r.height())
-	if s.level == Offer {
-		s.drawRecordButton(c, x, y, w, h, px(radius), px(buttonSize))
-		return
-	}
-	fill := p.button
-	switch {
-	case s.pressed == partButton:
-		fill = p.buttonPressed
-	case s.hot == partButton:
-		fill = p.buttonHover
-	}
-	c.roundRect(x, y, w, h, px(radius), p.buttonEdge)
-	c.roundRect(x+1, y+1, w-2, h-2, px(radius)-1, fill)
-
-	label := alpha(p.text, 1-s.flashAlpha)
-	c.text("I didn't get this", x, y, w, h, px(buttonSize), true, true, label)
-	if s.flash != "" {
-		color := p.saved
-		if !s.flashOK {
-			color = p.notSaved
-		}
-		c.text(s.flash, x, y, w, h, px(buttonSize), true, true, alpha(color, s.flashAlpha))
-	}
 }
 
 // alpha scales a colour's opacity by a (0..1).
@@ -219,7 +192,7 @@ func (o *Overlay) paint() {
 
 // RenderPNG writes one state of the card to path, at scale (1 = 100%), on the theme's solid
 // background, for reviewing the look without a class.
-func RenderPNG(path string, level Level, text string, saved, dark bool, scale float32) error {
+func RenderPNG(path string, level Level, text string, dark bool, scale float32) error {
 	s := scene{level: level, text: text, dark: dark}
 	switch {
 	case level == Normal:
@@ -227,10 +200,8 @@ func RenderPNG(path string, level Level, text string, saved, dark bool, scale fl
 	case level == Offer && text == "":
 		s.text = offerText
 	}
-	if saved {
-		s.flash, s.flashOK, s.flashAlpha = flashSaved, true, 1
-	}
-	w, h := int32(float32(cardW)*scale), int32(float32(cardH)*scale)
+	lw, lh := s.size()
+	w, h := int32(float32(lw)*scale), int32(float32(lh)*scale)
 	pixels := make([]uint32, w*h)
 	c, err := newCanvas(w, h, unsafe.Pointer(&pixels[0]))
 	if err != nil {

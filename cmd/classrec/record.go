@@ -12,7 +12,6 @@ import (
 
 	"classrec/internal/desktop"
 	"classrec/internal/detect"
-	"classrec/internal/marks"
 	"classrec/internal/obs"
 	"classrec/internal/overlay"
 	"classrec/internal/recorder"
@@ -59,7 +58,7 @@ func runRecordLoop(ctx context.Context, opts recordOptions) error {
 		return err
 	}
 	a := &agent{opts: opts, rec: rec, machine: detect.NewMachine(detect.DefaultConfig), log: log}
-	a.pill, err = overlay.New(overlay.Config{SettingsPath: settingsPath(), OnMark: a.mark, OnRecord: a.record})
+	a.pill, err = overlay.New(overlay.Config{SettingsPath: settingsPath(), OnRecord: a.record})
 	if err != nil {
 		log.printf("no overlay, so every class records without asking: %v", err)
 	}
@@ -161,7 +160,6 @@ func (a *agent) record() {
 
 func (a *agent) beginClass(ctx context.Context, target recorder.Target) {
 	a.log.startClass(classFile(a.opts.Root, "class.log"))
-	parkLeftover(classFile(a.opts.Root, "marks.json"))
 	if err := a.rec.Begin(ctx, target); err != nil {
 		a.log.printf("could not start recording: %v", err)
 		return
@@ -195,9 +193,7 @@ func (a *agent) endClass(ctx context.Context) {
 	a.log.printf("class filed in %s: %d file(s), %d left in staging; mode %s", class.Dir, len(class.Files), class.Pending, a.opts.Mode.Mode)
 	a.log.endClass()
 	if class.Dir != "" {
-		for _, name := range []string{"marks.json", "class.log"} {
-			moveIfPresent(classFile(a.opts.Root, name), filepath.Join(class.Dir, name), a.log.printf)
-		}
+		moveIfPresent(classFile(a.opts.Root, "class.log"), filepath.Join(class.Dir, "class.log"), a.log.printf)
 		copyToReports(a.opts.Root, filepath.Join(class.Dir, "class.log"), "class "+filepath.Base(class.Dir)+".log")
 		copyToReports(a.opts.Root, a.log.detectPath(), "")
 	}
@@ -225,21 +221,8 @@ func (a *agent) updatePill(ctx context.Context, sample detect.Sample) {
 	}
 }
 
-// mark records "I didn't get this" at the current moment. It runs on the overlay's thread.
-func (a *agent) mark() error {
-	return marks.AppendTime(classFile(a.opts.Root, "marks.json"), time.Now())
-}
-
 // classFile is where a file of the class in progress lives until the class is filed.
 func classFile(root, name string) string { return filepath.Join(root, "_staging", name) }
-
-// parkLeftover renames a file an interrupted class left behind, so the new class starts clean.
-func parkLeftover(path string) {
-	if _, err := os.Stat(path); err == nil {
-		ext := filepath.Ext(path)
-		_ = os.Rename(path, strings.TrimSuffix(path, ext)+time.Now().Format(" 2006-01-02 15-04-05")+ext)
-	}
-}
 
 // moveIfPresent moves src to dst unless dst exists; it never overwrites.
 func moveIfPresent(src, dst string, logf func(string, ...any)) {

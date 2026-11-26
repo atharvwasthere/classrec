@@ -14,7 +14,7 @@ The installed agent lives in `C:\classrec\` and is always a tagged release, neve
 |---|---|
 | Agent, ffmpeg, ffprobe, `.env` (Sarvam key), `.obs-password`, `settings.json` | `C:\classrec\` |
 | Agent logs (two weeks), detect logs, selftest reports | `C:\classrec\logs\` |
-| Classes: `part-01.mkv`…, `pieces.json`, `marks.json`, `class.log`, `transcript\` | `D:\Class Recordings\<class>\` |
+| Classes: `part-01.mkv`…, `pieces.json`, `class.log`, `transcript\` | `D:\Class Recordings\<class>\` |
 | Recordings in progress, and pieces OBS still held at the end of a class | `…\Class Recordings\_staging\` (`pending.json` lists the held ones; they are filed at the next start) |
 | Reports for remote debugging | `D:\Class Recordings\_reports\` |
 
@@ -72,8 +72,7 @@ Sarvam key in `C:\classrec\.env` (`SARVAM_API_KEY=…`) and set the mode in `C:\
 
 The agent logs its mode when it starts and with every class; restart it to pick up the change
 (`Stop-ScheduledTask classrec; Start-ScheduledTask classrec`). Transcription runs after the class
-is filed; the transcript lands in `<class>\transcript\transcript.md`, with `marks.md` for every
-"I didn't get this". Sarvam costs about ₹0.58 per minute of class including GST. In mode `record`,
+is filed; the transcript lands in `<class>\transcript\transcript.md`. Sarvam costs about ₹0.58 per minute of class including GST. In mode `record`,
 transcribe a single class by hand with `classrec process "<class folder>"`.
 
 ## What the agent changes in OBS, and how to undo it

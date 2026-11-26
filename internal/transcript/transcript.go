@@ -125,32 +125,3 @@ func ZoomDate(path string) (string, bool) {
 	}
 	return t.In(time.Local).Format("2006-01-02"), true
 }
-
-// around returns segments starting from mark-before to mark+after seconds, inclusive.
-func around(segs []Segment, mark, before, after float64) []Segment {
-	var out []Segment
-	for _, s := range segs {
-		if s.Start >= mark-before && s.Start <= mark+after {
-			out = append(out, s)
-		}
-	}
-	return out
-}
-
-// MarksMarkdown lists the transcript from before to after seconds around each mark.
-func MarksMarkdown(marks []float64, segs []Segment, before, after float64) string {
-	var b strings.Builder
-	for i, mark := range marks {
-		fmt.Fprintf(&b, "## Mark %d at [%s]\n\n", i+1, formatTimestamp(mark))
-		window := around(segs, mark, before, after)
-		if len(window) == 0 {
-			b.WriteString("(no transcript lines in this window)\n")
-		}
-		for _, s := range window {
-			b.WriteString(line(s))
-			b.WriteByte('\n')
-		}
-		b.WriteByte('\n')
-	}
-	return b.String()
-}

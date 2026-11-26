@@ -23,7 +23,7 @@ func (*Overlay) SetStatus(Level, string) {}
 func (*Overlay) Close() {}
 
 // RenderPNG fails: drawing needs Windows' GDI+.
-func RenderPNG(string, Level, string, bool, bool, float32) error {
+func RenderPNG(string, Level, string, bool, float32) error {
 	return errors.New("the overlay needs Windows")
 }
 

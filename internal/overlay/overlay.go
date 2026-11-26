@@ -1,4 +1,5 @@
-// Package overlay is the always-on-top pill and "I didn't get this" button shown while a class records.
+// Package overlay is the always-on-top card: "Record this class" when a class starts, then the
+// recording's status.
 // It never takes focus, so Zoom's and Meet's keyboard shortcuts keep working after a click.
 package overlay
 
@@ -35,9 +36,8 @@ func (l Level) String() string {
 
 // Config wires the overlay to its surroundings.
 type Config struct {
-	SettingsPath string       // where the dragged position is remembered
-	OnMark       func() error // called on the UI thread when "I didn't get this" is clicked
-	OnRecord     func()       // called on the UI thread when "Record this class" is clicked
+	SettingsPath string // where the dragged position is remembered
+	OnRecord     func() // called on the UI thread when "Record this class" is clicked
 }
 
 type point struct{ X, Y int32 }

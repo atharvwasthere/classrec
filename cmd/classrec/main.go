@@ -23,10 +23,9 @@ const usage = `usage: classrec process <video or class folder> [flags]
        classrec uninstall                   (stops starting the agent at logon)
        classrec selftest                    (checks everything; writes logs\selftest-<time>.txt)
        classrec record-test [--app meet|zoom] [--seconds 30]   (records a clip with the real OBS)
-       classrec overlay-demo [--state green|amber|red|saved] [--dir <folder for marks.json>]
+       classrec overlay-demo [--state green|amber|red|offer]
 
   --out <dir>          output directory (default ./out/<video name>)
-  --marks <file>       JSON array of seconds; writes marks.md with mark-120s..mark+180s
   --reuse-audio <ogg>  adopt already-extracted audio if its duration matches the video
   --stop-after <stage> extract | chunk | transcribe | merge | write | cost
   --model --mode --lang  Sarvam job parameters (defaults: saaras:v4, codemix, hi-IN)
@@ -79,7 +78,6 @@ func run(args []string) error {
 func runProcess(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("process", flag.ContinueOnError)
 	out := fs.String("out", "", "")
-	marks := fs.String("marks", "", "")
 	reuse := fs.String("reuse-audio", "", "")
 	stopAfter := fs.String("stop-after", "", "")
 	model := fs.String("model", "saaras:v4", "")
@@ -126,7 +124,7 @@ func runProcess(ctx context.Context, args []string) error {
 
 	logf := func(format string, a ...any) { fmt.Fprintf(os.Stderr, format+"\n", a...) }
 	p, err := pipeline.New(pipeline.Config{
-		Video: video, Out: *out, Date: *date, MarksPath: *marks, ReuseAudio: *reuse, StopAfter: *stopAfter, CacheDir: *cache,
+		Video: video, Out: *out, Date: *date, ReuseAudio: *reuse, StopAfter: *stopAfter, CacheDir: *cache,
 		Params: sarvam.JobParams{Model: *model, Mode: *mode, LanguageCode: *lang, WithTimestamps: true},
 	}, &lazyBatch{envFile: *envFile}, logf)
 	if err != nil {

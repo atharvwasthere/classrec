@@ -4,7 +4,6 @@ import (
 	"errors"
 	"runtime"
 	"sync"
-	"time"
 	"unsafe"
 
 	"golang.org/x/sys/windows"
@@ -16,13 +15,6 @@ const (
 	normalText      = "Recording class"
 	offerText       = "Class detected"
 	recordText      = "Record this class"
-
-	flashTimerID  = 1
-	flashTickMs   = 40
-	flashHold     = 1500 * time.Millisecond // shown fully, then
-	flashFade     = 500 * time.Millisecond  // faded out
-	flashSaved    = "Saved ✓"
-	flashNotSaved = "Not saved"
 )
 
 // Overlay is a running overlay window. Its exported methods are safe from any goroutine;
@@ -47,9 +39,6 @@ type Overlay struct {
 	dragging       bool
 	dragStartMouse point
 	dragStartPos   point
-	flash          string
-	flashOK        bool
-	flashAt        time.Time
 }
 
 // current is the one overlay; a window procedure has no closure to find its Go object.
@@ -107,10 +96,6 @@ func (o *Overlay) scene() scene {
 	s := scene{level: o.level, text: o.text}
 	o.statusMu.Unlock()
 	s.dark, s.backdrop, s.collapsed, s.hot, s.pressed = o.dark, o.backdrop, o.collapsed, o.hot, o.pressed
-	if o.flash != "" {
-		s.flash, s.flashOK = o.flash, o.flashOK
-		s.flashAlpha = 1 - float32(max(0, time.Since(o.flashAt)-flashHold))/float32(flashFade)
-	}
 	return s
 }
 
@@ -227,8 +212,6 @@ func wndProc(hwnd, message, wParam, lParam uintptr) uintptr {
 	case wmCaptureChanged:
 		o.pressed, o.dragging = partNone, false
 		o.invalidate()
-	case wmTimer:
-		o.onFlashTick()
 	case wmDpiChanged:
 		o.setDPI(uint32(wParam & 0xFFFF))
 	case wmSettingChange:
@@ -243,7 +226,7 @@ func wndProc(hwnd, message, wParam, lParam uintptr) uintptr {
 	case wmAppHide:
 		procShowWindow.Call(hwnd, swHide)
 	case wmAppRefresh:
-		o.invalidate()
+		o.resize() // the offer card is taller than the recording card
 	case wmAppClose:
 		procDestroyWindow.Call(hwnd)
 	case wmDestroy:
@@ -304,12 +287,8 @@ func (o *Overlay) onLeftButtonUp(p point) {
 		o.setCollapsed(false)
 	case dragging:
 		_ = savePosition(o.cfg.SettingsPath, o.windowPosition()) // a lost position is only a nuisance
-	case pressed == partButton && released == partButton && o.scene().level == Offer:
-		if o.cfg.OnRecord != nil {
-			o.cfg.OnRecord()
-		}
-	case pressed == partButton && released == partButton:
-		o.markMoment()
+	case pressed == partButton && released == partButton && o.cfg.OnRecord != nil:
+		o.cfg.OnRecord()
 	case pressed == partCollapse && released == partCollapse:
 		o.setCollapsed(true)
 	}
@@ -336,26 +315,6 @@ func (o *Overlay) setCollapsed(collapsed bool) {
 	work := o.workArea()
 	y := min(max(o.expandedAt.Y, work.Top), work.Bottom-o.px(tabH))
 	o.moveTo(point{X: work.Right - o.px(tabW), Y: y})
-}
-
-// markMoment records "I didn't get this" and shows the result on the button, fading after 1.5 s.
-func (o *Overlay) markMoment() {
-	o.flash, o.flashOK, o.flashAt = flashSaved, true, time.Now()
-	if o.cfg.OnMark != nil {
-		if err := o.cfg.OnMark(); err != nil {
-			o.flash, o.flashOK = flashNotSaved, false
-		}
-	}
-	procSetTimer.Call(o.hwnd, flashTimerID, flashTickMs, 0)
-	o.invalidate()
-}
-
-func (o *Overlay) onFlashTick() {
-	if time.Since(o.flashAt) >= flashHold+flashFade {
-		procKillTimer.Call(o.hwnd, flashTimerID)
-		o.flash = ""
-	}
-	o.invalidate()
 }
 
 // px converts logical pixels to the window's monitor pixels.
@@ -399,7 +358,7 @@ func (o *Overlay) workArea() rect {
 // Zoom's and Meet's bottom control bars.
 func (o *Overlay) moveToDefaultPosition() {
 	work := o.workArea()
-	o.moveTo(point{X: work.Right - o.px(cardW) - o.px(edgeMargin), Y: work.Top + (work.height()-o.px(cardH))/2})
+	o.moveTo(point{X: work.Right - o.px(cardW) - o.px(edgeMargin), Y: work.Top + (work.height()-o.px(offerH))/2})
 }
 
 func isOnAnyMonitor(p point) bool {

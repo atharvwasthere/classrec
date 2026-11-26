@@ -17,8 +17,6 @@ type Config struct {
 	Out   string
 	// ReuseAudio is an already-extracted audio file adopted instead of re-extracting, if its duration matches the video.
 	ReuseAudio string
-	// MarksPath is an optional JSON array of seconds; each gets a transcript window in marks.md.
-	MarksPath string
 	// Date (YYYY-MM-DD) overrides the recording date; otherwise it comes from the file name or the container.
 	Date string
 	// StopAfter ends the run after the named stage, e.g. "chunk" for an offline dry run.
@@ -94,9 +92,6 @@ func (p *Pipeline) stages() []Stage {
 		{Name: "merge", Verify: p.mergeVerify, Run: p.merge},
 		{Name: "write", Verify: p.writeVerify, Run: p.write},
 		{Name: "cost", Verify: p.costVerify, Run: p.cost},
-	}
-	if p.cfg.MarksPath != "" {
-		stages = append(stages, Stage{Name: "marks", Verify: func() bool { return false }, Run: p.marks})
 	}
 	for i, s := range stages {
 		if s.Name == p.cfg.StopAfter {

@@ -64,17 +64,6 @@ func TestZoomDateIsTheLocalDayAndReadsWindowsPaths(t *testing.T) {
 	}
 }
 
-func TestMarksWindowIsMinus120ToPlus180AndClampsAtStart(t *testing.T) {
-	segs := []Segment{{0, 1, "s0"}, {879, 880, "before"}, {880, 881, "edge-in"}, {1180, 1181, "edge-out"}, {1181, 1182, "after"}}
-	got := around(segs, 1000, 120, 180)
-	if len(got) != 2 || got[0].Text != "edge-in" || got[1].Text != "edge-out" {
-		t.Fatalf("window boundaries wrong: %v", got)
-	}
-	if early := around(segs, 60, 120, 180); len(early) != 1 || early[0].Text != "s0" {
-		t.Fatalf("a mark near the start must not drop the opening lines: %v", early)
-	}
-}
-
 func TestParseChunkRejectsShapesItCannotTrust(t *testing.T) {
 	// "words" is what the live API returns; "chunks" is what the docs show
 	for key, raw := range map[string]string{

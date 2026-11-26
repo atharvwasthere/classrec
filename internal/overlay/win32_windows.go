@@ -27,8 +27,6 @@ var (
 	procReleaseCapture      = user32.NewProc("ReleaseCapture")
 	procTrackMouseEvent     = user32.NewProc("TrackMouseEvent")
 	procGetCursorPos        = user32.NewProc("GetCursorPos")
-	procSetTimer            = user32.NewProc("SetTimer")
-	procKillTimer           = user32.NewProc("KillTimer")
 	procLoadCursorW         = user32.NewProc("LoadCursorW")
 	procGetDpiForWindow     = user32.NewProc("GetDpiForWindow")
 	procMonitorFromWindow   = user32.NewProc("MonitorFromWindow")
@@ -55,7 +53,6 @@ const (
 	wmEraseBkgnd     = 0x0014
 	wmSettingChange  = 0x001A
 	wmMouseActivate  = 0x0021
-	wmTimer          = 0x0113
 	wmMouseMove      = 0x0200
 	wmLButtonDown    = 0x0201
 	wmLButtonUp      = 0x0202
