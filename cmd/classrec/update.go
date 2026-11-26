@@ -20,11 +20,10 @@ import (
 const (
 	latestReleaseAPI = "https://api.github.com/repos/atharvwasthere/classrec/releases/latest"
 	updateEvery      = 24 * time.Hour
-	exitUpdated      = 3 // a failure exit, so the scheduled task restarts the agent on the new exe
 )
 
-// errUpdated means a new classrec.exe is in place and passed its selftest; the agent exits so
-// Task Scheduler restarts it on the new exe.
+// errUpdated means a new classrec.exe is in place and passed its selftest. The agent has queued a
+// run of its scheduled task and exits; Task Scheduler starts that run, on the new exe, at once.
 var errUpdated = errors.New("updated to a new release; restarting")
 
 // updater replaces exe with the latest GitHub release when that is newer than version.

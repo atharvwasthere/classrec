@@ -22,8 +22,8 @@ const (
 func currentUser() string { return os.Getenv("USERDOMAIN") + `\` + os.Getenv("USERNAME") }
 
 // taskXML is the scheduled task that starts the agent at her logon, as her, only while she is
-// logged on; restarts it a minute after any failure (including the deliberate exit after a
-// self-update); and never stops it for being on battery or running long.
+// logged on; runs a queued start as soon as the running agent ends (how a self-update restarts
+// it); retries a start that fails; and never stops it for being on battery or running long.
 func taskXML(exe, user string) string {
 	esc := func(s string) string {
 		var b strings.Builder
@@ -36,7 +36,7 @@ func taskXML(exe, user string) string {
   <Triggers><LogonTrigger><Enabled>true</Enabled><UserId>%[2]s</UserId></LogonTrigger></Triggers>
   <Principals><Principal id="Author"><UserId>%[2]s</UserId><LogonType>InteractiveToken</LogonType><RunLevel>LeastPrivilege</RunLevel></Principal></Principals>
   <Settings>
-    <MultipleInstancesPolicy>IgnoreNew</MultipleInstancesPolicy>
+    <MultipleInstancesPolicy>Queue</MultipleInstancesPolicy>
     <DisallowStartIfOnBatteries>false</DisallowStartIfOnBatteries>
     <StopIfGoingOnBatteries>false</StopIfGoingOnBatteries>
     <ExecutionTimeLimit>PT0S</ExecutionTimeLimit>

@@ -41,7 +41,7 @@ func main() {
 	err := run(os.Args[1:])
 	if errors.Is(err, errUpdated) {
 		fmt.Fprintln(os.Stderr, err)
-		os.Exit(exitUpdated)
+		return
 	}
 	if err != nil {
 		fmt.Fprintln(os.Stderr, "error:", err)
