@@ -38,7 +38,8 @@ type agent struct {
 	level   overlay.Level
 	// wanted is set when she clicks "Record this class", on the overlay's thread, and cleared
 	// when the class ends. Only a wanted class is recorded.
-	wanted atomic.Bool
+	wanted  atomic.Bool
+	offered bool // the "Record this class" card is on screen
 }
 
 // runRecordLoop records classes until ctx ends.
@@ -134,6 +135,9 @@ func (a *agent) step(ctx context.Context) {
 	case a.wanted.Load() && (a.machine.Phase() == detect.Recording || a.machine.Phase() == detect.Ending):
 		app, title := a.machine.Class() // she asked to record it, or a start failed earlier: (re)try
 		a.beginClass(ctx, targetFor(app, title, sample))
+	case a.machine.Phase() == detect.Recording || a.machine.Phase() == detect.Ending:
+		app, _ := a.machine.Class() // not asked to record: the card shows only while the meeting window does
+		a.showOffer(app, observed.Meeting[app] != "")
 	}
 }
 
@@ -142,7 +146,19 @@ func (a *agent) step(ctx context.Context) {
 func (a *agent) offerClass(app detect.App, title string) {
 	a.log.printf("class detected: %s %q; asking whether to record", app, title)
 	a.wanted.Store(a.pill == nil) // also drops a click that came as the last class ended
-	if a.pill == nil {
+	a.offered = false
+	a.showOffer(app, true)
+}
+
+// showOffer shows or hides the "Record this class" card, so it leaves with the meeting window and
+// comes back if she rejoins before the class ends.
+func (a *agent) showOffer(app detect.App, show bool) {
+	if a.pill == nil || show == a.offered {
+		return
+	}
+	a.offered = show
+	if !show {
+		a.pill.Hide()
 		return
 	}
 	a.pill.SetStatus(overlay.Offer, string(app)+" class detected")
@@ -175,6 +191,7 @@ func (a *agent) beginClass(ctx context.Context, target recorder.Target) {
 
 func (a *agent) endClass(ctx context.Context) {
 	wanted := a.wanted.Swap(false)
+	a.offered = false
 	if a.pill != nil {
 		a.pill.Hide()
 	}
