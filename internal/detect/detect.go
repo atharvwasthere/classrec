@@ -130,7 +130,9 @@ func Classify(s Sample) Observation {
 	o := Observation{Meeting: map[App]string{}, Mic: map[App]bool{}, AppAudio: s.AppAudioLive}
 	for _, spec := range Apps {
 		for _, w := range s.Windows {
-			if isExe(w.Exe, `\/`, spec.Exe) && spec.Matches(w) {
+			// Only a window on screen is a meeting: Zoom keeps its meeting window, hidden, in the
+			// tray after a meeting ends.
+			if w.Visible && isExe(w.Exe, `\/`, spec.Exe) && spec.Matches(w) {
 				o.Meeting[spec.App] = w.Title
 				break
 			}
@@ -293,8 +295,10 @@ func (m *Machine) stepEnding(t time.Time, o Observation) *Event {
 		m.phase = Recording
 		return nil
 	}
-	goneFor := t.Sub(m.since)
-	if goneFor < m.cfg.Grace {
+	// A meeting in another app means she moved on: end this class now, not after the grace.
+	app, _, found := startSignal(o)
+	movedOn := found && app != m.app
+	if goneFor := t.Sub(m.since); goneFor < m.cfg.Grace && !movedOn {
 		return nil
 	}
 	stop := m.event(Stop, t)

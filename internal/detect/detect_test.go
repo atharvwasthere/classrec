@@ -36,11 +36,16 @@ func TestClassify(t *testing.T) {
 		s    Sample
 		want Observation
 	}{
-		{"meet tab", Sample{Windows: []Window{{Exe: edgeExe, Title: meetName}}}, seen(map[App]string{Meet: meetName})},
-		{"meeting is not meet", Sample{Windows: []Window{{Exe: edgeExe, Title: "Meeting notes - Microsoft Edge"}}}, seen(nil)},
+		{"meet tab", Sample{Windows: []Window{{Exe: edgeExe, Title: meetName, Visible: true}}}, seen(map[App]string{Meet: meetName})},
+		{"meeting is not meet", Sample{Windows: []Window{{Exe: edgeExe, Title: "Meeting notes - Microsoft Edge", Visible: true}}}, seen(nil)},
 		{"meet in another browser", Sample{Windows: []Window{{Exe: `C:\chrome.exe`, Title: meetName}}}, seen(nil)},
-		{"zoom meeting by class", Sample{Windows: []Window{{Exe: zoomExe, Class: "ConfMultiTabContentWndClass", Title: "Zoom"}}}, seen(map[App]string{Zoom: "Zoom"})},
-		{"zoom home is not a meeting", Sample{Windows: []Window{{Exe: zoomExe, Class: "ZPPTMainFrmWndClassEx", Title: "Zoom Workplace"}}}, seen(nil)},
+		{"zoom meeting by class", Sample{Windows: []Window{{Exe: zoomExe, Class: "ConfMultiTabContentWndClass", Title: "Zoom Meeting", Visible: true}}}, seen(map[App]string{Zoom: "Zoom Meeting"})},
+		// After a meeting Zoom stays in the tray and keeps its meeting window, hidden (seen 2026-11-26).
+		{"zoom left in the tray is not a meeting", Sample{Windows: []Window{
+			{Exe: zoomExe, Class: "ConfMultiTabContentWndClass", Title: "Zoom Workplace"},
+			{Exe: edgeExe, Title: meetName, Visible: true},
+		}}, seen(map[App]string{Meet: meetName})},
+		{"zoom home is not a meeting", Sample{Windows: []Window{{Exe: zoomExe, Class: "ZPPTMainFrmWndClassEx", Title: "Zoom Workplace", Visible: true}}}, seen(nil)},
 		{"mic open", Sample{Mic: []MicUse{{Path: zoomMic, Start: 5}, {Path: edgeMic, Start: 5}}}, seen(nil, Zoom, Meet)},
 		{"mic closed", Sample{Mic: []MicUse{{Path: zoomMic, Start: 5, Stop: 6}, {Path: edgeMic}}}, seen(nil)},
 	}
@@ -102,6 +107,8 @@ func TestMachine(t *testing.T) {
 			[]Event{{"start", at(10), Meet, "Meet"}, {"stop", at(1000), Meet, "Meet"}}},
 		{"audio blip inside the grace restarts it", []step{{10, meet}, {20, none}, {1, audio}, {31, none}},
 			[]Event{{"start", at(10), Meet, "Meet"}, {"stop", at(610), Meet, "Meet"}}},
+		{"leaving zoom for meet ends zoom at once and starts meet", []step{{10, zoom}, {3, none}, {3, meet}},
+			[]Event{{"start", at(10), Zoom, "Zoom Meeting"}, {"stop", at(130), Zoom, "Zoom Meeting"}, {"start", at(150), Meet, "Meet"}}},
 	}
 	for _, tt := range tests {
 		if got := run(tt.steps...); !reflect.DeepEqual(got, tt.want) {
