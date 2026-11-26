@@ -6,6 +6,7 @@ import (
 	"flag"
 	"fmt"
 	"os"
+	"os/user"
 	"path/filepath"
 	"strings"
 	"time"
@@ -143,14 +144,24 @@ func checkKeepAwake(context.Context) (string, error) {
 }
 
 func checkTask(ctx context.Context) (string, error) {
-	user, err := taskRunsAs(ctx)
+	owner, err := taskRunsAs(ctx)
 	if err != nil {
 		return "", err
 	}
-	if !strings.EqualFold(user, currentUser()) && !strings.HasSuffix(strings.ToLower(currentUser()), `\`+strings.ToLower(user)) {
-		return user, errors.New("the task runs as someone else")
+	if !isCurrentUser(owner) {
+		return owner, errors.New("the task runs as someone else")
 	}
-	return user, nil
+	return owner, nil
+}
+
+// isCurrentUser reports whether a task's UserId is the current user. Task Scheduler reports it as
+// a SID (the Uid of os/user on Windows), as DOMAIN\name, or as the bare name.
+func isCurrentUser(id string) bool {
+	if me, err := user.Current(); err == nil && strings.EqualFold(id, me.Uid) {
+		return true
+	}
+	name := currentUser()
+	return strings.EqualFold(id, name) || strings.HasSuffix(strings.ToLower(name), `\`+strings.ToLower(id))
 }
 
 func checkMode(context.Context) (string, error) {
