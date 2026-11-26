@@ -20,8 +20,12 @@ func reportsDir(root string) string {
 	return filepath.Join(root, "_reports")
 }
 
-// copyToReports copies one report file into the reports folder; a failure only loses the copy.
-func copyToReports(root, path string) {
+// copyToReports copies a report file into the reports folder, as name ("" keeps its own); a
+// failure only loses the copy.
+func copyToReports(root, path, name string) {
+	if name == "" {
+		name = filepath.Base(path)
+	}
 	dir := reportsDir(root)
 	if os.MkdirAll(dir, 0o755) != nil {
 		return
@@ -31,7 +35,7 @@ func copyToReports(root, path string) {
 		return
 	}
 	defer in.Close()
-	out, err := os.Create(filepath.Join(dir, filepath.Base(path)))
+	out, err := os.Create(filepath.Join(dir, name))
 	if err != nil {
 		return
 	}

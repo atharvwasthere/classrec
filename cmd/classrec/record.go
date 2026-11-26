@@ -100,7 +100,9 @@ func (a *agent) step(ctx context.Context) {
 	if a.rec.Recording() {
 		sample.AppAudioLive = a.rec.AppAudioLive()
 	}
-	event := a.machine.Step(sample.Time, detect.Classify(sample))
+	observed := detect.Classify(sample)
+	event := a.machine.Step(sample.Time, observed)
+	a.log.sample(debugLine{Sample: sample.ClassAppsOnly(), Obs: observed, Phase: a.machine.Phase(), Event: event})
 	switch {
 	case event != nil && event.Kind == detect.Stop:
 		a.endClass(ctx)
@@ -153,6 +155,8 @@ func (a *agent) endClass(ctx context.Context) {
 		for _, name := range []string{"marks.json", "class.log"} {
 			moveIfPresent(classFile(a.opts.Root, name), filepath.Join(class.Dir, name), a.log.printf)
 		}
+		copyToReports(a.opts.Root, filepath.Join(class.Dir, "class.log"), "class "+filepath.Base(class.Dir)+".log")
+		copyToReports(a.opts.Root, a.log.detectPath(), "")
 	}
 	afterClass(ctx, a.opts.Mode.Mode, class, a.log.printf, processClass)
 }

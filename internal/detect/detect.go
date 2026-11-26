@@ -100,6 +100,31 @@ type Observation struct {
 	AppAudio bool           // the recorded app's audio is audible in OBS
 }
 
+// ClassAppsOnly is s without the windows and mic entries of any app that is not a class app, so a
+// log of it can leave the laptop without showing what else she had open.
+func (s Sample) ClassAppsOnly() Sample {
+	isClassApp := func(path, separators string) bool {
+		for _, spec := range Apps {
+			if isExe(path, separators, spec.Exe) {
+				return true
+			}
+		}
+		return false
+	}
+	out := Sample{Time: s.Time, AppAudioLive: s.AppAudioLive}
+	for _, w := range s.Windows {
+		if isClassApp(w.Exe, `\/`) {
+			out.Windows = append(out.Windows, w)
+		}
+	}
+	for _, m := range s.Mic {
+		if isClassApp(m.Path, "#") {
+			out.Mic = append(out.Mic, m)
+		}
+	}
+	return out
+}
+
 // Classify reduces a Sample to the signals the state machine uses.
 func Classify(s Sample) Observation {
 	o := Observation{Meeting: map[App]string{}, Mic: map[App]bool{}, AppAudio: s.AppAudioLive}

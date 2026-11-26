@@ -1,6 +1,7 @@
 package main
 
 import (
+	"encoding/json"
 	"fmt"
 	"os"
 	"path/filepath"
@@ -19,6 +20,9 @@ type agentLog struct {
 	day   string
 	file  *os.File
 	class *os.File
+
+	detectDay  string
+	detectFile *os.File
 }
 
 func openAgentLog() (*agentLog, error) {
@@ -50,6 +54,32 @@ func (l *agentLog) printf(format string, a ...any) {
 	}
 }
 
+// sample appends one detection sample to logs\detect-<date>.jsonl, the log replay tests run on.
+// Callers pass samples already stripped to the class apps.
+func (l *agentLog) sample(line any) {
+	encoded, err := json.Marshal(line)
+	if err != nil {
+		return
+	}
+	l.mu.Lock()
+	defer l.mu.Unlock()
+	if day := time.Now().Format("2006-01-02"); day != l.detectDay {
+		if l.detectFile != nil {
+			l.detectFile.Close()
+		}
+		l.detectDay = day
+		l.detectFile, _ = os.OpenFile(l.detectPath(), os.O_CREATE|os.O_WRONLY|os.O_APPEND, 0o644)
+	}
+	if l.detectFile != nil {
+		_, _ = l.detectFile.Write(append(encoded, '\n'))
+	}
+}
+
+// detectPath is today's detect log.
+func (l *agentLog) detectPath() string {
+	return filepath.Join(l.dir, "detect-"+time.Now().Format("2006-01-02")+".jsonl")
+}
+
 // startClass also sends every line to path until endClass.
 func (l *agentLog) startClass(path string) {
 	l.mu.Lock()
@@ -72,8 +102,10 @@ func (l *agentLog) close() {
 	l.endClass()
 	l.mu.Lock()
 	defer l.mu.Unlock()
-	if l.file != nil {
-		l.file.Close()
+	for _, f := range []*os.File{l.file, l.detectFile} {
+		if f != nil {
+			f.Close()
+		}
 	}
 }
 
@@ -81,10 +113,13 @@ func (l *agentLog) close() {
 func pruneLogs(dir string, now time.Time) {
 	entries, _ := os.ReadDir(dir)
 	for _, e := range entries {
-		day, found := strings.CutPrefix(e.Name(), "agent-")
-		day, isLog := strings.CutSuffix(day, ".log")
+		name := strings.TrimSuffix(strings.TrimSuffix(e.Name(), ".log"), ".jsonl")
+		day, found := strings.CutPrefix(name, "agent-")
+		if !found {
+			day, found = strings.CutPrefix(name, "detect-")
+		}
 		t, err := time.ParseInLocation("2006-01-02", day, time.Local)
-		if found && isLog && err == nil && now.Sub(t) > keepLogsFor {
+		if found && name != e.Name() && err == nil && now.Sub(t) > keepLogsFor {
 			_ = os.Remove(filepath.Join(dir, e.Name()))
 		}
 	}

@@ -173,3 +173,22 @@ func TestReplay(t *testing.T) {
 		}
 	}
 }
+
+// Promise: the detect log that leaves the laptop holds only Zoom and Edge, never her other windows.
+func TestClassAppsOnlyStripsOtherApps(t *testing.T) {
+	s := Sample{
+		Windows: []Window{
+			{Exe: edgeExe, Title: meetName},
+			{Exe: `C:\Program Files\WhatsApp\WhatsApp.exe`, Title: "WhatsApp - private chat"},
+			{Exe: zoomExe, Title: "Zoom Meeting"},
+		},
+		Mic: []MicUse{{Path: zoomMic, Start: 5}, {Path: `C:#Apps#Discord.exe`, Start: 5}},
+	}
+	got := s.ClassAppsOnly()
+	if len(got.Windows) != 2 || got.Windows[0].Exe != edgeExe || got.Windows[1].Exe != zoomExe {
+		t.Errorf("windows %+v", got.Windows)
+	}
+	if len(got.Mic) != 1 || got.Mic[0].Path != zoomMic {
+		t.Errorf("mic %+v", got.Mic)
+	}
+}

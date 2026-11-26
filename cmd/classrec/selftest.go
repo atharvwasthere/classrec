@@ -62,7 +62,7 @@ func runSelftest(ctx context.Context, args []string) error {
 	path := filepath.Join(exeDir(), "logs", "selftest-"+time.Now().Format("2006-01-02_150405")+".txt")
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err == nil {
 		_ = os.WriteFile(path, []byte(report.String()), 0o644) // the printed report stands if this fails
-		copyToReports(*root, path)
+		copyToReports(*root, path, "")
 	}
 	if failed > 0 {
 		return fmt.Errorf("%d check(s) failed", failed)
