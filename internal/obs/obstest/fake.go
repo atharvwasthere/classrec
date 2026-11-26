@@ -23,6 +23,7 @@ const (
 
 	codeSuccess          = 100
 	codeUnknownRequest   = 204
+	codeNotReady         = 207
 	codeOutputRunning    = 500
 	codeOutputNotRunning = 501
 	codeNotFound         = 600
@@ -51,6 +52,7 @@ type Server struct {
 	conns      []*ws.Conn
 	requests   []string // request types received, in order
 	failing    map[string]bool
+	notReady   int // StartRecords to answer "not ready", as a freshly started OBS does
 	recording  bool
 	recordings int
 	recordDir  string
@@ -106,6 +108,14 @@ func (s *Server) FailRequests(types ...string) {
 	for _, t := range types {
 		s.failing[t] = true
 	}
+}
+
+// StartingUp makes the next n StartRecords answer "not ready", as OBS does for a few seconds
+// after it starts.
+func (s *Server) StartingUp(n int) {
+	s.mu.Lock()
+	defer s.mu.Unlock()
+	s.notReady = n
 }
 
 // DropConnections closes every connection without a close frame, as when the network hiccups.
@@ -342,6 +352,10 @@ func (s *Server) answer(conn *ws.Conn, requestType, requestID string, requestDat
 }
 
 func (s *Server) startRecord(request) reply {
+	if s.notReady > 0 {
+		s.notReady--
+		return reply{codeNotReady, nil}
+	}
 	if s.recording {
 		return reply{codeOutputRunning, nil}
 	}

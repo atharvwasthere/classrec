@@ -192,7 +192,8 @@ func TestOBSKilledMidClassGivesTwoPiecesInOneFolder(t *testing.T) {
 	h.begin(meet)
 	h.now = classStart.Add(12 * time.Minute)
 	h.fake.Kill()
-	h.dying = true // obs64.exe is still in the process list for a moment after it is killed
+	h.dying = true       // obs64.exe is still in the process list for a moment after it is killed
+	h.fake.StartingUp(3) // and the relaunched OBS is not ready to record at first
 	if err := h.rec.Tick(context.Background()); err != nil {
 		t.Fatal(err)
 	}

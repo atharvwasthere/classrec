@@ -24,6 +24,8 @@ const (
 )
 
 const (
+	codeNotReady           = 207 // obs-websocket: OBS is still starting up
+	notReadyAttempts       = 30
 	codeOutputRunning      = 500 // obs-websocket: StartRecord while already recording
 	codeOutputNotRunning   = 501 // StopRecord while not recording
 	codeResourceExists     = 601 // CreateScene or CreateInput for a name in use

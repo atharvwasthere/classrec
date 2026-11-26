@@ -247,12 +247,8 @@ func (r *Recorder) startPiece(ctx context.Context) error {
 	}
 	r.markStagingSeen()
 	started := r.cfg.Now()
-	if err := r.client.StartRecord(ctx); err != nil {
-		var refused *obs.RequestError
-		if !errors.As(err, &refused) || refused.Code != codeOutputRunning {
-			return fmt.Errorf("starting the recording: %w", err)
-		}
-		r.cfg.Log("obs was already recording; carrying on with that recording")
+	if err := r.startRecord(ctx); err != nil {
+		return err
 	}
 	// OBS starts its output a moment after it acknowledges StartRecord
 	for attempt := 0; attempt < 10; attempt++ {
@@ -265,6 +261,28 @@ func (r *Recorder) startPiece(ctx context.Context) error {
 		}
 	}
 	return errors.New("obs says it is not recording after StartRecord")
+}
+
+// startRecord asks OBS to record. An OBS that has just started accepts connections before it can
+// record and answers "not ready" for a few seconds, so that answer is retried for up to 30 s.
+func (r *Recorder) startRecord(ctx context.Context) error {
+	for attempt := 0; ; attempt++ {
+		err := r.client.StartRecord(ctx)
+		var refused *obs.RequestError
+		switch {
+		case err == nil:
+			return nil
+		case errors.As(err, &refused) && refused.Code == codeOutputRunning:
+			r.cfg.Log("obs was already recording; carrying on with that recording")
+			return nil
+		case errors.As(err, &refused) && refused.Code == codeNotReady && attempt < notReadyAttempts:
+			if err := r.cfg.Sleep(ctx, time.Second); err != nil {
+				return err
+			}
+		default:
+			return fmt.Errorf("starting the recording: %w", err)
+		}
+	}
 }
 
 // markStagingSeen notes the files already in staging, so only files made from now on count as pieces.
