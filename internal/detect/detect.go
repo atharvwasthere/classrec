@@ -232,7 +232,7 @@ type Machine struct {
 }
 
 // NewMachine returns an Idle machine with cfg's timings.
-func NewMachine(cfg Config) *Machine { return &Machine{cfg: cfg} }
+func NewMachine(cfg Config) *Machine { return &Machine{cfg: cfg, phase: Idle} }
 
 // Phase is where the machine is.
 func (m *Machine) Phase() Phase { return m.phase }

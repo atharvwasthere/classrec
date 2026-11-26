@@ -192,3 +192,10 @@ func TestClassAppsOnlyStripsOtherApps(t *testing.T) {
 		t.Errorf("mic %+v", got.Mic)
 	}
 }
+
+// Promise: a new machine is Idle, so the agent's between-classes work (updates) runs from the start.
+func TestNewMachineIsIdle(t *testing.T) {
+	if p := NewMachine(DefaultConfig).Phase(); p != Idle {
+		t.Fatalf("phase %q, want %q", p, Idle)
+	}
+}
