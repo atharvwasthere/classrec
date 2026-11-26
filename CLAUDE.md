@@ -2,7 +2,7 @@
 
 Records a student's online classes (Zoom, Google Meet in Edge) with OBS on a Windows 11 laptop
 and, in mode "full", turns them into timestamped Hindi/Hinglish transcripts with Sarvam.
-Operations: docs/OPERATIONS.md.
+Operations (install, updates, rollback, mode full, what it changes in OBS): docs/OPERATIONS.md.
 
 ## Building and testing
 
