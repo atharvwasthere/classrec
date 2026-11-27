@@ -143,8 +143,14 @@ func (a *agent) step(ctx context.Context) {
 		}
 		a.updatePill(ctx, sample)
 	case a.wanted.Load() && (a.machine.Phase() == detect.Recording || a.machine.Phase() == detect.Ending):
-		app, title := a.machine.Class() // she asked to record it, or a start failed earlier: (re)try
-		a.beginClass(ctx, targetFor(app, title, sample))
+		// She asked to record it, or a start failed earlier: (re)try, naming the class after its window
+		// now. At detection Meet may still be in its lobby, titled only "Meet".
+		app, title := a.machine.Class()
+		target := recorder.Target{App: app, Title: title}
+		if now, class := classWindow(app, observed, sample); now != "" {
+			target.Title, target.Class = now, class
+		}
+		a.beginClass(ctx, target)
 	case a.machine.Phase() == detect.Recording || a.machine.Phase() == detect.Ending:
 		app, _ := a.machine.Class() // not asked to record: the card shows only while the meeting window does
 		a.showOffer(app, observed.Meeting[app] != "")
@@ -295,18 +301,6 @@ func classWindow(app detect.App, observed detect.Observation, sample detect.Samp
 		}
 	}
 	return "", ""
-}
-
-// targetFor finds the named meeting window, to tell OBS which window to capture.
-func targetFor(app detect.App, title string, sample detect.Sample) recorder.Target {
-	target := recorder.Target{App: app, Title: title}
-	for _, w := range sample.Windows {
-		if w.Title == title {
-			target.Class = w.Class
-			break
-		}
-	}
-	return target
 }
 
 func readOBSPassword() (string, error) {

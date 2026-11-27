@@ -327,6 +327,8 @@ func TestClassFolders(t *testing.T) {
 	for _, tt := range []struct{ in, want string }{
 		{"Meet - xyz-abcd-efg - Personal - Microsoft\u200b Edge", "xyz-abcd-efg"},
 		{"Meet - Maths 101 - Microsoft Edge", "Maths 101"},
+		{"Meet - onz-vfgb-qtv and 2 more pages - Preeti - Microsoft\u200b Edge", "onz-vfgb-qtv"},
+		{"Meet - onz-vfgb-qtv and 1 more page - Microsoft Edge", "onz-vfgb-qtv"},
 		{"Meet - Algebra - Part 2 - Personal - Microsoft Edge", "Algebra - Part 2"},
 		{"Zoom Meeting", "Class"},
 		{"Zoom Meeting - Algebra", "Algebra"},

@@ -7,6 +7,7 @@ import (
 	"fmt"
 	"os"
 	"path/filepath"
+	"regexp"
 	"strings"
 	"time"
 	"unicode/utf8"
@@ -36,12 +37,12 @@ type PieceInfo struct {
 // file makes the class folder, notes when each piece began, and moves the pieces in. A piece OBS
 // still holds after moveTimeout stays in staging and goes into pending.json for RetryPending.
 func (r *Recorder) file(ctx context.Context) (Class, error) {
-	dir, err := makeClassDir(r.cfg.Root, classFolderName(r.began, r.target.App, r.target.Title))
+	dir, err := makeClassDir(r.cfg.Root, classFolderName(r.began, r.target.App, r.name))
 	if err != nil {
 		return Class{}, fmt.Errorf("making the class folder: %w", err)
 	}
 	class := Class{Dir: dir}
-	info := Pieces{App: r.target.App, Title: r.target.Title, Began: r.began}
+	info := Pieces{App: r.target.App, Title: r.name, Began: r.began}
 	for i, p := range r.pieces {
 		name := fmt.Sprintf("part-%02d%s", i+1, filepath.Ext(p.path))
 		info.Pieces = append(info.Pieces, PieceInfo{File: name, Start: p.start})
@@ -162,11 +163,15 @@ func classFolderName(began time.Time, app detect.App, windowTitle string) string
 	return fmt.Sprintf("%s (%s)", name, app)
 }
 
+// otherTabs is what Edge adds to a window title when the window has more tabs: " and 2 more pages".
+var otherTabs = regexp.MustCompile(` and \d+ more pages?\b`)
+
 // sanitizeTitle turns a meeting window title into a short, safe folder name part: the "Meet - "
 // and "Zoom Meeting" boilerplate, Edge's suffix and the profile name before it are dropped;
 // \ / : * ? " < > | and control characters are removed; spaces are collapsed; dots, spaces and
 // dashes are trimmed from the ends; at most 60 characters are kept; empty becomes "Class".
 func sanitizeTitle(title string) string {
+	title = otherTabs.ReplaceAllString(title, "")
 	parts := strings.Split(title, " - ")
 	last := strings.ReplaceAll(strings.TrimSpace(parts[len(parts)-1]), "\u200b", "") // Edge writes "Microsoft\u200b Edge"
 	edge := strings.EqualFold(last, "Microsoft Edge")

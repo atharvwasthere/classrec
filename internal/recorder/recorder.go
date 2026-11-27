@@ -73,6 +73,7 @@ type Recorder struct {
 	client    *obs.Client
 	active    bool
 	target    Target
+	name      string // the class's title as it began, for its folder; the window's may change later
 	began     time.Time
 	pieceFrom time.Time       // start of the piece being recorded
 	pieces    []piece         // finished pieces, in order
@@ -129,7 +130,7 @@ func (r *Recorder) Begin(ctx context.Context, t Target) error {
 	if err := r.connect(ctx, true); err != nil {
 		return err
 	}
-	r.target, r.began, r.pieces, r.seen = t, r.cfg.Now(), nil, map[string]bool{}
+	r.target, r.name, r.began, r.pieces, r.seen = t, t.Title, r.cfg.Now(), nil, map[string]bool{}
 	if err := r.startPiece(ctx); err != nil {
 		return err
 	}
@@ -193,7 +194,7 @@ func (r *Recorder) StopLeftover(ctx context.Context) (class Class, ok bool, err 
 		return Class{}, false, err
 	}
 	r.began = r.cfg.Now().Add(-time.Duration(status.DurationMS) * time.Millisecond)
-	r.target = Target{Title: leftoverTitle}
+	r.target, r.name = Target{}, leftoverTitle
 	r.pieces, r.seen = []piece{{path, r.began}}, map[string]bool{path: true}
 	class, err = r.file(ctx)
 	r.pieces = nil
