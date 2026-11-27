@@ -21,7 +21,7 @@ const (
 // currentUser is DOMAIN\name of the user running classrec.
 func currentUser() string { return os.Getenv("USERDOMAIN") + `\` + os.Getenv("USERNAME") }
 
-// taskXML is the scheduled task that starts the agent at her logon, as her, only while she is
+// taskXML is the scheduled task that starts the agent at the user's logon, as that user, only while they are
 // logged on; runs a queued start as soon as the running agent ends (how a self-update restarts
 // it); retries a start that fails; and never stops it for being on battery or running long.
 func taskXML(exe, user string) string {

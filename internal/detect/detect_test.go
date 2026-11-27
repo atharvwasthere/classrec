@@ -47,13 +47,13 @@ func TestClassify(t *testing.T) {
 			inCall,
 		}}, seen(map[App]string{Meet: meetName})},
 		{"zoom home is not a meeting", Sample{Windows: []Window{{Exe: zoomExe, Class: "ZPPTMainFrmWndClassEx", Title: "Zoom Workplace", Visible: true}}}, seen(nil)},
-		// Minimised, Zoom swaps its meeting window for a floating video window; sharing her screen, it
+		// Minimised, Zoom swaps its meeting window for a floating video window; sharing their screen, it
 		// adds a toolbar (seen 2026-11-27).
 		{"zoom minimised", Sample{Windows: []Window{
 			{Exe: zoomExe, Class: "ConfMultiTabContentWndClass", Title: "Zoom Meeting"},
 			{Exe: zoomExe, Class: "ZPFloatVideoWndClass", Title: "Zoom Workplace", Visible: true},
 		}}, seen(map[App]string{Zoom: "Zoom Workplace"})},
-		{"zoom sharing her screen", Sample{Windows: []Window{
+		{"zoom sharing their screen", Sample{Windows: []Window{
 			{Exe: zoomExe, Class: "ConfMultiTabContentWndClass", Title: "Zoom Meeting"},
 			{Exe: zoomExe, Class: "ZPFloatToolbarClass", Title: "Screen sharing meeting controls", Visible: true},
 		}}, seen(map[App]string{Zoom: "Screen sharing meeting controls"})},
@@ -144,7 +144,7 @@ func TestReplayIgnoresClassSound(t *testing.T) {
 	}
 }
 
-// Promise: the detect log that leaves the laptop holds only Zoom and Edge, never her other windows.
+// Promise: the detect log that leaves the laptop holds only Zoom and Edge, never their other windows.
 func TestClassAppsOnlyStripsOtherApps(t *testing.T) {
 	s := Sample{
 		Windows: []Window{

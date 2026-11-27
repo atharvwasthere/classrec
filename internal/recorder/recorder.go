@@ -204,7 +204,7 @@ func (r *Recorder) StopLeftover(ctx context.Context) (class Class, ok bool, err 
 }
 
 // Follow points the capture at the class window's current title. Edge renames its window when
-// Meet moves from the lobby into the call and when she switches tabs, and OBS finds an Edge
+// Meet moves from the lobby into the call and when they switch tabs, and OBS finds an Edge
 // window only by its exact title: without this, picture and sound go blank (seen 2026-11-27).
 func (r *Recorder) Follow(ctx context.Context, title, class string) error {
 	r.mu.Lock()

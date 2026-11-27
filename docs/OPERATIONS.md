@@ -1,9 +1,9 @@
 # Operating classrec
 
-classrec runs on the student's Windows 11 laptop. It notices a class (a Zoom meeting window, or a
+classrec runs on the student's Windows laptop. It notices a class (a Zoom meeting window, or a
 Google Meet tab in Edge) and shows a small card with a **Record this class** button. Nothing is
-recorded unless she clicks it; if she does, it records with OBS until the class ends and files it in
-`D:\Class Recordings\<date> <day> - <title> (<Zoom|Meet>)\`. In mode `full` it also
+recorded unless the student clicks it; then it records with OBS until they leave the call and files it in
+`<recordings folder>\<date> <day> - <title> (<Zoom|Meet>)\` (`recordings_dir` in `settings.json`, by default `Videos\Class Recordings`). In mode `full` it also
 makes a Hindi/Hinglish transcript with Sarvam.
 
 The installed agent lives in `C:\classrec\` and is always a tagged release, never a dev build.
@@ -16,9 +16,9 @@ How it decides a class is on, what it records and what the card's warnings mean 
 |---|---|
 | Agent, ffmpeg, ffprobe, `.env` (Sarvam key), `.obs-password`, `settings.json` | `C:\classrec\` |
 | Agent logs (two weeks), detect logs, selftest reports | `C:\classrec\logs\` |
-| Classes: `part-01.mkv`…, `pieces.json`, `class.log`, `transcript\` | `D:\Class Recordings\<class>\` |
+| Classes: `part-01.mkv`…, `pieces.json`, `class.log`, `transcript\` | `<recordings folder>\<class>\` |
 | Recordings in progress, and pieces OBS still held at the end of a class | `…\Class Recordings\_staging\` (`pending.json` lists the held ones; they are filed at the next start) |
-| Reports for remote debugging | `D:\Class Recordings\_reports\` |
+| Reports for remote debugging | `<recordings folder>\_reports\` |
 
 Reports are selftest results, per-class logs and detect logs. Detect logs keep only Zoom and Edge
 windows; every other window title is stripped before the log is written. Reports never contain
@@ -28,7 +28,7 @@ recordings or transcripts.
 
 ```powershell
 .\classrec.exe selftest            # PASS/FAIL per check; writes logs\selftest-<time>.txt
-.\classrec.exe process "D:\Class Recordings\<class>"   # transcript for one class (calls Sarvam)
+.\classrec.exe process "<recordings folder>\<class>"   # transcript for one class (calls Sarvam)
 .\classrec.exe calibrate "<class>\part-01.mkv"                     # set the silence threshold from a real class
 .\classrec.exe record-test --app zoom                              # 30 s test recording: sound, picture, files
 .\classrec.exe overlay-demo --state red                            # see the card without a class
@@ -36,7 +36,7 @@ recordings or transcripts.
 
 ## Fix a bug from Claude Code on the web
 
-1. **Read the report.** Open the latest files in `D:\Class Recordings\_reports\`: `selftest-*.txt`,
+1. **Read the report.** Open the latest files in `<recordings folder>\_reports\`: `selftest-*.txt`,
    `class <class>.log` and `detect-<date>.jsonl`. A detect log replays in tests: copy it to
    `internal/detect/testdata/` and replay it with `readJSONL` and `replay`, as
    `TestReplayIgnoresClassSound` does, to reproduce the bug.
@@ -89,7 +89,7 @@ transcribe a single class by hand with `classrec process "<class folder>"`.
 `%APPDATA%\obs-studio\basic\profiles\classrec\` with MKV, QuickSync H.264, CBR 1000 kbps,
 2 s keyframes, the screen as canvas, 1280×720 at 15 fps, recording into `Class Recordings\_staging`.
 
-During a class she chose to record, the agent:
+During a class the student chose to record, the agent:
 
 - switches OBS to the classrec profile;
 - creates and selects the scenes **classrec - Meet** and **classrec - Zoom** (a window capture and
@@ -110,7 +110,7 @@ delete the `profiles\classrec` folder; in OBS delete the two `classrec - …` sc
 3. Copy `ffmpeg.exe` and `ffprobe.exe` (an ffmpeg essentials build) and `.obs-password` (the OBS
    websocket password, one line) into `C:\classrec\`. For mode full also `.env` with `SARVAM_API_KEY=…`.
 4. Run `C:\classrec\classrec.exe install`. It writes the OBS profile, registers the agent to start
-   at logon as her, and runs the selftest (which starts OBS and records 10 s into a scratch folder).
+   at logon as the signed-in user, and runs the selftest (which starts OBS and records 10 s into a scratch folder).
    Every line should say PASS.
 5. Start the agent now with `Start-ScheduledTask classrec` (or sign out and back in).
 

@@ -1,7 +1,7 @@
 # classrec
 
-Records a student's online classes (Zoom, Google Meet in Edge) with OBS on a Windows 11 laptop,
-when she clicks "Record this class" on the card it shows for each class, and, in mode "full",
+Records a student's online classes (Zoom, Google Meet in Edge) with OBS on Windows, when they click
+"Record this class" on the card it shows for each class, and, in mode "full",
 turns them into timestamped Hindi/Hinglish transcripts with Sarvam.
 What it does and how to use it: README.md. Operations (install, updates, rollback, mode full, what it
 changes in OBS): docs/OPERATIONS.md. What changed in each release: CHANGELOG.md.

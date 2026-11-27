@@ -13,7 +13,7 @@ import (
 // Level is the pill's state.
 type Level int
 
-// The pill's states: all well, a warning, a problem someone must fix now, and a class she may
+// The pill's states: all well, a warning, a problem someone must fix now, and a class they may
 // choose to record.
 const (
 	Normal Level = iota

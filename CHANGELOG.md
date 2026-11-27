@@ -6,12 +6,16 @@ this file, so every version is listed here before it is tagged.
 ## [Unreleased]
 
 ### Added
-- A README: what classrec does, the exact rules for when a class is on, what is recorded, the
-  warnings, install, everyday use, troubleshooting and the code layout.
-- This changelog. Each GitHub release now shows its section from here, and a release without one
-  fails to publish.
+- Settings in `settings.json`: `recordings_dir` (where classes are saved) and `help_contact` (who the
+  card names when something needs fixing).
+- A README and this changelog. Each GitHub release now shows its section from here, and a release
+  without one fails to publish.
 
 ### Changed
+- **Classes are saved to `Videos\Class Recordings` by default.** Set `recordings_dir` to keep using
+  another folder, such as `D:\Class Recordings`.
+- The card's "No class audio" and "No class video" warnings end with "call <help_contact>", or
+  "ask for help" when none is set.
 - CI uses the current GitHub Actions (`checkout@v5`, `setup-go@v6`), ahead of Node 20's retirement.
 
 ## [v0.1.10] - 2026-11-27
@@ -19,7 +23,7 @@ this file, so every version is listed here before it is tagged.
 ### Fixed
 - **"Recording is struggling" no longer shows all the time.** It turned amber on every single
   dropped frame. It now shows only when a tenth of a minute's frames are dropped, which is when the
-  video visibly stutters. A Meet call costs OBS about 2% of frames on this laptop (a repeated frame
+  video visibly stutters. A Meet call can cost OBS about 2% of frames on a low-end laptop (a repeated frame
   every few seconds), which nobody sees. The class log notes the minute's drops once instead of a
   line per frame.
 - `record-test` checked the picture 5 seconds in, before OBS's capture had started, and reported no
@@ -28,7 +32,7 @@ this file, so every version is listed here before it is tagged.
 ## [v0.1.9] - 2026-11-27
 
 ### Added
-- **"No class video — call Adi".** Every 30 seconds of recording the agent asks OBS for its picture
+- **"No class video" warning.** Every 30 seconds of recording the agent asks OBS for its picture
   of the class. After a minute with no picture (OBS lost the window, or the frame is a single
   colour) it points the capture at the window again and the card turns amber until the picture is
   back. A white slide is not mistaken for this: a real Zoom or Edge window always has toolbars.
@@ -37,7 +41,7 @@ this file, so every version is listed here before it is tagged.
 ## [v0.1.8] - 2026-11-27
 
 ### Changed
-- **A recording stops 10 seconds after she leaves the call** (was 5 minutes), and only leaving
+- **A recording stops 10 seconds after the student leaves the call** (was 5 minutes), and only leaving
   counts:
   - **Meet:** in the call while an Edge tab named `Meet - …` is marked by Edge as using the
     microphone or camera. Muted, camera off, or another tab showing still count as in the call.
@@ -45,14 +49,14 @@ this file, so every version is listed here before it is tagged.
   - **Zoom:** in the call while its meeting window, its floating video window (meeting minimised)
     or its screen-sharing toolbar is on screen. Zoom left running in the tray does not count.
   - Sound and the microphone no longer decide anything: a muted Zoom does not hold the microphone,
-    and a class's sound can go on after she has left.
-- A class is named after its window when she clicks **Record this class**, and keeps that name.
+    and a class's sound can go on after they have left.
+- A class is named after its window when **Record this class** is clicked, and keeps that name.
 
 ### Fixed
-- **Meet recorded a black picture with no sound** once she joined the call: Meet renames the Edge
+- **Meet recorded a black picture with no sound** once the student joined the call: Meet renames the Edge
   window when it moves from the lobby into the call, and OBS only finds an Edge window by its exact
-  title. The capture now follows the class window whenever its title changes, including when she
-  switches tabs.
+  title. The capture now follows the class window whenever its title changes, including when they
+  switch tabs.
 - A Meet class folder was named after whichever tab was showing at the end, and included Edge's
   "and 2 more pages".
 - Stopping the agent mid-class (`Stop-ScheduledTask`) left OBS recording into staging for ever. The
@@ -74,7 +78,7 @@ this file, so every version is listed here before it is tagged.
 
 ### Changed
 - The **Record this class** card goes away as soon as the meeting window closes, and comes back if
-  she rejoins before the class ends.
+  they rejoin before the class ends.
 
 ### Fixed
 - **A Meet class was announced as "Zoom class detected"** after a Zoom meeting: Zoom keeps its
@@ -91,18 +95,18 @@ this file, so every version is listed here before it is tagged.
 ## [v0.1.4] - 2026-11-26
 
 ### Changed
-- Reports for remote debugging go to `D:\Class Recordings\_reports`, never OneDrive.
+- Reports for remote debugging go to `_reports` in the recordings folder, never OneDrive.
 
 ## [v0.1.3] - 2026-11-26
 
 ### Changed
-- Classes are recorded to `D:\Class Recordings`, so they never fill the system drive.
+- Classes are recorded to `D:\Class Recordings`, off the system drive. (From the next release the folder is a setting.)
 
 ## [v0.1.2] - 2026-11-26
 
 ### Changed
 - **Nothing records without asking.** When a class is detected the card shows **Record this class**;
-  the class is recorded only if she clicks it.
+  the class is recorded only if the student clicks it.
 
 ### Fixed
 - After updating itself the agent exited and never came back: Task Scheduler does not restart a

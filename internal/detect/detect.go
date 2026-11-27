@@ -49,21 +49,21 @@ type AppSpec struct {
 	App         App
 	Exe         string            // file name of its exe, matched ignoring case
 	WindowClass string            // window class of its meeting window, for OBS's window capture
-	Matches     func(Window) bool // whether a window of Exe shows her in the call
+	Matches     func(Window) bool // whether a window of Exe shows them in the call
 	SceneName   string            // the OBS scene the agent records it with
 }
 
-// zoomMeetingClass is the class of Zoom's meeting window: visible while she is in a meeting, hidden
-// (titled "Zoom Workplace") once she leaves and Zoom stays in the tray (seen 2026-11-26).
+// zoomMeetingClass is the class of Zoom's meeting window: visible while they are in a meeting, hidden
+// (titled "Zoom Workplace") once they leave and Zoom stays in the tray (seen 2026-11-26).
 const zoomMeetingClass = "ConfMultiTabContentWndClass"
 
-// zoomInCallClasses are Zoom's windows that are on screen only while she is in a meeting: the
-// meeting window; the small floating video window, which replaces it when she minimises the
-// meeting; and the toolbar shown while she shares her screen, when the meeting window is hidden
+// zoomInCallClasses are Zoom's windows that are on screen only while they are in a meeting: the
+// meeting window; the small floating video window, which replaces it when they minimise the
+// meeting; and the toolbar shown while they share their screen, when the meeting window is hidden
 // too (seen 2026-11-27). A muted Zoom does not hold the mic, so the mic cannot tell.
 var zoomInCallClasses = []string{zoomMeetingClass, "ZPFloatVideoWndClass", "ZPFloatToolbarClass"}
 
-// Apps lists the class apps. When two show a meeting the first wins; she attends one class at a time.
+// Apps lists the class apps. When two show a meeting the first wins; they attend one class at a time.
 var Apps = []AppSpec{
 	{
 		App: Zoom, Exe: "Zoom.exe", WindowClass: zoomMeetingClass, SceneName: "classrec - Zoom",
@@ -87,11 +87,11 @@ func SpecFor(app App) (spec AppSpec, ok bool) {
 
 // Observation is what one Sample says about the class apps.
 type Observation struct {
-	Meeting map[App]string // title of the window showing each app's call, if she is in one
+	Meeting map[App]string // title of the window showing each app's call, if they are in one
 }
 
 // ClassAppsOnly is s without the windows of any app that is not a class app, so a log of it can
-// leave the laptop without showing what else she had open.
+// leave the laptop without showing what else they had open.
 func (s Sample) ClassAppsOnly() Sample {
 	isClassApp := func(path, separators string) bool {
 		for _, spec := range Apps {
@@ -138,7 +138,7 @@ func isExe(path, separators, exe string) bool {
 
 // inMeetCall reports whether an Edge tab is in a Meet call. A Meet tab is named "Meet - abc-defg-hij"
 // in the call and after leaving it alike; only in the call does Edge add "Microphone recording" or
-// "Camera recording", and it keeps doing so while she is muted with the camera off (seen 2026-11-27).
+// "Camera recording", and it keeps doing so while they are muted with the camera off (seen 2026-11-27).
 func inMeetCall(tab string) bool {
 	return strings.HasPrefix(tab, "Meet - ") && strings.Contains(tab, " recording")
 }
@@ -160,7 +160,7 @@ type Config struct {
 	Grace time.Duration // recording stops only after the class has been gone this long
 }
 
-// DefaultConfig starts a class after she has been in a call for 10 s and ends it 10 s after she leaves.
+// DefaultConfig starts a class after they have been in a call for 10 s and ends it 10 s after they leave.
 var DefaultConfig = Config{Hold: 10 * time.Second, Grace: 10 * time.Second}
 
 // EventKind says whether recording should start or stop.
@@ -182,8 +182,8 @@ type Event struct {
 
 // Machine is the detection state machine.
 //
-// A class starts when she has been in a call for Hold and ends when she has been out of it for
-// Grace. Being in a call is the app's own sign of it (see Apps), so muting, minimising, sharing her
+// A class starts when they have been in a call for Hold and ends when they have been out of it for
+// Grace. Being in a call is the app's own sign of it (see Apps), so muting, minimising, sharing their
 // screen or looking at another Edge tab do not end it.
 type Machine struct {
 	cfg   Config
@@ -274,14 +274,14 @@ func (m *Machine) reset() {
 	m.title = ""
 }
 
-// classStillOn reports whether she is still in the class's call. Neither the mic nor the class's
-// sound counts: leaving the call (Zoom left in the tray, a Meet tab that says she left) ends the
+// classStillOn reports whether they are still in the class's call. Neither the mic nor the class's
+// sound counts: leaving the call (Zoom left in the tray, a Meet tab that says they left) ends the
 // class 10 s later.
 func (m *Machine) classStillOn(o Observation) bool {
 	return o.Meeting[m.app] != ""
 }
 
-// startSignal is the first app, in Apps order, whose call she is in.
+// startSignal is the first app, in Apps order, whose call they are in.
 func startSignal(o Observation) (app App, title string, found bool) {
 	for _, spec := range Apps {
 		if title := o.Meeting[spec.App]; title != "" {
