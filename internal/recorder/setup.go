@@ -24,13 +24,17 @@ const (
 )
 
 const (
-	codeNotReady           = 207 // obs-websocket: OBS is still starting up
-	notReadyAttempts       = 30
-	codeOutputRunning      = 500 // obs-websocket: StartRecord while already recording
-	codeOutputNotRunning   = 501 // StopRecord while not recording
-	codeResourceExists     = 601 // CreateScene or CreateInput for a name in use
-	profileSettle          = 2 * time.Second
-	windowPriorityExe      = 2 // OBS window capture: if the title is gone, match the exe
+	codeNotReady         = 207 // obs-websocket: OBS is still starting up
+	notReadyAttempts     = 30
+	codeOutputRunning    = 500 // obs-websocket: StartRecord while already recording
+	codeOutputNotRunning = 501 // StopRecord while not recording
+	codeResourceExists   = 601 // CreateScene or CreateInput for a name in use
+	profileSettle        = 2 * time.Second
+	windowPriorityExe    = 2 // OBS window capture: if the title is gone, match the exe
+	// windowCaptureWGC is OBS's "Windows 10 (1903 and up)" capture method. "Automatic" picks BitBlt
+	// for Zoom, which records Zoom's toolbars but leaves the video and shared screen blank white
+	// (seen 2026-11-27); WGC captures the window as it is on screen.
+	windowCaptureWGC       = 2
 	alignCenter            = 0 // OBS alignment bits: left 1, right 2, top 4, bottom 8; none is centre
 	alignTopLeft           = 1 | 4
 	boundsScaleToFitInside = "OBS_BOUNDS_SCALE_INNER"
@@ -161,7 +165,7 @@ func setUpScene(ctx context.Context, c sceneSetup, t Target, canvas [2]int) (aud
 		name, kind string
 		settings   map[string]any
 	}{
-		{video, "window_capture", map[string]any{"window": window, "priority": windowPriorityExe, "cursor": false}},
+		{video, "window_capture", map[string]any{"window": window, "priority": windowPriorityExe, "method": windowCaptureWGC, "cursor": false}},
 		{audio, "wasapi_process_output_capture", map[string]any{"window": window, "priority": windowPriorityExe}},
 	} {
 		err := ignoreExists(c.CreateInput(ctx, scene, in.name, in.kind, in.settings))
