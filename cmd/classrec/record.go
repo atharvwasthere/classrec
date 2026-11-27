@@ -40,6 +40,10 @@ type agent struct {
 	// when the class ends. Only a wanted class is recorded.
 	wanted  atomic.Bool
 	offered bool // the "Record this class" card is on screen
+	// videoCheckedAt is when OBS's picture of the class was last checked; blankChecks counts the
+	// checks in a row that found no picture.
+	videoCheckedAt time.Time
+	blankChecks    int
 }
 
 // runRecordLoop records classes until ctx ends.
@@ -199,6 +203,7 @@ func (a *agent) beginClass(ctx context.Context, target recorder.Target) {
 	a.log.printf("recording started; mode %s", a.opts.Mode.Mode)
 	desktop.KeepAwake(true)
 	a.warn, a.level = newWarnings(time.Now()), overlay.Normal
+	a.videoCheckedAt, a.blankChecks = time.Now(), 0 // first look 30 s in
 	if a.pill != nil {
 		a.pill.SetStatus(overlay.Normal, "")
 		a.pill.Show()
@@ -241,6 +246,7 @@ func (a *agent) updatePill(ctx context.Context, sample detect.Sample) {
 	skipped, _ := a.rec.SkippedFrames(ctx) // unknown counts as none; the recorder logs connection trouble
 	level, text, dropped := a.warn.update(classSignals{
 		now: sample.Time, audible: sample.AppAudioLive, onBattery: desktop.OnBattery(), skippedFrames: skipped,
+		videoBlank: a.checkVideo(ctx, sample.Time),
 	})
 	if dropped {
 		a.log.printf("obs dropped frames: %d so far in this piece", skipped)
@@ -252,6 +258,32 @@ func (a *agent) updatePill(ctx context.Context, sample detect.Sample) {
 	if a.pill != nil {
 		a.pill.SetStatus(level, text)
 	}
+}
+
+// checkVideo looks at OBS's picture of the class every 30 s and reports whether it has shown
+// nothing for two looks in a row. At the second it points the capture at the window again, which
+// is what a lost window needs.
+func (a *agent) checkVideo(ctx context.Context, now time.Time) bool {
+	const every, blankAfter = 30 * time.Second, 2
+	if now.Sub(a.videoCheckedAt) < every {
+		return a.blankChecks >= blankAfter
+	}
+	a.videoCheckedAt = now
+	if !blankVideo(a.rec.VideoFrame(ctx)) {
+		if a.blankChecks >= blankAfter {
+			a.log.printf("the class video is back")
+		}
+		a.blankChecks = 0
+		return false
+	}
+	a.blankChecks++
+	if a.blankChecks == blankAfter {
+		a.log.printf("obs has recorded no picture of the class window for a minute; pointing it at the window again")
+		if err := a.rec.Recapture(ctx); err != nil {
+			a.log.printf("could not point obs at the class window: %v", err)
+		}
+	}
+	return a.blankChecks >= blankAfter
 }
 
 // classFile is where a file of the class in progress lives until the class is filed.

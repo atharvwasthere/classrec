@@ -7,6 +7,7 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"image"
 	"os"
 	"path/filepath"
 	"sort"
@@ -25,6 +26,7 @@ const (
 	connectAttempts = 60 // a second apart: OBS takes a while to start
 	audioFresh      = 5 * time.Second
 	moveTimeout     = 10 * time.Second // how long OBS may hold a file after StopRecord
+	frameWidth      = 160              // pixels across the frames VideoFrame returns: enough to see a picture
 )
 
 // Config says where things are and how to reach OBS.
@@ -210,17 +212,46 @@ func (r *Recorder) Follow(ctx context.Context, title, class string) error {
 	if !r.active || title == "" || title == r.target.Title || !r.alive() {
 		return nil
 	}
+	r.cfg.Log("the class window is now %q; capturing it", title)
+	r.target.Title, r.target.Class = title, class
+	return r.pointCapture(ctx)
+}
+
+// Recapture points the capture at the class window again, for a capture that has stopped showing it.
+func (r *Recorder) Recapture(ctx context.Context) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.active || !r.alive() {
+		return nil
+	}
+	return r.pointCapture(ctx)
+}
+
+func (r *Recorder) pointCapture(ctx context.Context) error {
 	spec, ok := detect.SpecFor(r.target.App)
 	if !ok {
 		return fmt.Errorf("unknown app %q", r.target.App)
 	}
-	r.cfg.Log("the class window is now %q; capturing it", title)
-	r.target.Title, r.target.Class = title, class
 	var errs []error
 	for _, in := range captureInputs(spec, r.target) {
 		errs = append(errs, r.client.SetInputSettings(ctx, in.name, in.settings))
 	}
 	return errors.Join(errs...)
+}
+
+// VideoFrame is the class window as OBS is recording it now, a small image. An error says OBS
+// cannot render it, as when the capture has lost the window.
+func (r *Recorder) VideoFrame(ctx context.Context) (image.Image, error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.active || !r.alive() {
+		return nil, errors.New("not recording")
+	}
+	spec, ok := detect.SpecFor(r.target.App)
+	if !ok {
+		return nil, fmt.Errorf("unknown app %q", r.target.App)
+	}
+	return r.client.SourceScreenshot(ctx, spec.SceneName+" video", frameWidth)
 }
 
 // End stops the recording and files the class. If the connection dropped it reconnects, without

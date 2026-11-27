@@ -46,8 +46,12 @@ func runRecordTest(ctx context.Context, args []string) error {
 	if err := rec.Begin(ctx, target); err != nil {
 		return err
 	}
+	pictureBlank := true
 	for s := 1; s <= *seconds && ctx.Err() == nil; s++ {
 		time.Sleep(time.Second)
+		if s == min(5, *seconds) {
+			pictureBlank = blankVideo(rec.VideoFrame(ctx)) // while recording: what OBS sees
+		}
 		if s == *killAt {
 			logf("killing obs64.exe")
 			_ = exec.Command("taskkill", "/F", "/IM", "obs64.exe").Run() // a failed kill shows up as one piece
@@ -63,6 +67,7 @@ func runRecordTest(ctx context.Context, args []string) error {
 		return err
 	}
 	fmt.Println(checkClass(context.WithoutCancel(ctx), class, rec.Problems(), *killAt > 0))
+	fmt.Printf("%s  obs saw a picture of the window, not a blank or lost capture\n", map[bool]string{true: "FAIL", false: "PASS"}[pictureBlank])
 	return nil
 }
 

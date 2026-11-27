@@ -3,12 +3,17 @@
 package obs
 
 import (
+	"bytes"
 	"context"
+	"encoding/base64"
 	"encoding/json"
 	"errors"
 	"fmt"
+	"image"
+	"image/png"
 	"math"
 	"strconv"
+	"strings"
 	"sync"
 	"sync/atomic"
 	"time"
@@ -45,6 +50,27 @@ type RecordStatus struct {
 	Active     bool  `json:"outputActive"`
 	Paused     bool  `json:"outputPaused"`
 	DurationMS int64 `json:"outputDuration"`
+}
+
+// SourceScreenshot is a source's current frame as OBS renders it, width pixels wide. OBS refuses
+// (code 702) when it has nothing to render, as when a window capture has lost its window.
+func (c *Client) SourceScreenshot(ctx context.Context, source string, width int) (image.Image, error) {
+	var response struct {
+		ImageData string `json:"imageData"`
+	}
+	data := map[string]any{"sourceName": source, "imageFormat": "png", "imageWidth": width}
+	if err := c.call(ctx, "GetSourceScreenshot", data, &response); err != nil {
+		return nil, err
+	}
+	_, encoded, ok := strings.Cut(response.ImageData, ",")
+	if !ok {
+		return nil, errors.New("obs screenshot is not a data URL")
+	}
+	raw, err := base64.StdEncoding.DecodeString(encoded)
+	if err != nil {
+		return nil, err
+	}
+	return png.Decode(bytes.NewReader(raw))
 }
 
 // InputLevel is the latest audio level OBS reported for one input.
