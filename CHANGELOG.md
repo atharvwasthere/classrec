@@ -5,6 +5,8 @@ this file, so every version is listed here before it is tagged.
 
 ## [Unreleased]
 
+## [v0.1.11] - 2026-11-28
+
 ### Added
 - Settings in `settings.json`: `recordings_dir` (where classes are saved) and `help_contact` (who the
   card names when something needs fixing).
@@ -142,7 +144,8 @@ First release.
   `overlay-demo`; reports for remote debugging, with every window other than Zoom and Edge stripped
   from the detect logs.
 
-[Unreleased]: https://github.com/atharvwasthere/classrec/compare/v0.1.10...HEAD
+[Unreleased]: https://github.com/atharvwasthere/classrec/compare/v0.1.11...HEAD
+[v0.1.11]: https://github.com/atharvwasthere/classrec/compare/v0.1.10...v0.1.11
 [v0.1.10]: https://github.com/atharvwasthere/classrec/compare/v0.1.9...v0.1.10
 [v0.1.9]: https://github.com/atharvwasthere/classrec/compare/v0.1.8...v0.1.9
 [v0.1.8]: https://github.com/atharvwasthere/classrec/compare/v0.1.7...v0.1.8
