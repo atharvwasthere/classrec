@@ -17,8 +17,6 @@ import (
 	"classrec/internal/recorder"
 )
 
-const defaultRoot = `D:\Class Recordings` // on D:, so classes never fill the system drive
-
 type recordOptions struct {
 	Mode     modeChoice
 	Interval time.Duration
@@ -27,7 +25,7 @@ type recordOptions struct {
 }
 
 // agent is the record loop's state: it watches for classes, offers to record each one, and
-// records with OBS the ones she says yes to.
+// records with OBS the ones they say yes to.
 type agent struct {
 	opts    recordOptions
 	rec     *recorder.Recorder
@@ -36,7 +34,7 @@ type agent struct {
 	pill    *overlay.Overlay // nil if the overlay could not start
 	warn    *warnings        // nil between classes
 	level   overlay.Level
-	// wanted is set when she clicks "Record this class", on the overlay's thread, and cleared
+	// wanted is set when they click "Record this class", on the overlay's thread, and cleared
 	// when the class ends. Only a wanted class is recorded.
 	wanted  atomic.Bool
 	offered bool // the "Record this class" card is on screen
@@ -147,7 +145,7 @@ func (a *agent) step(ctx context.Context) {
 		}
 		a.updatePill(ctx, sample)
 	case a.wanted.Load() && (a.machine.Phase() == detect.Recording || a.machine.Phase() == detect.Ending):
-		// She asked to record it, or a start failed earlier: (re)try, naming the class after its window
+		// They asked to record it, or a start failed earlier: (re)try, naming the class after its window
 		// now. At detection Meet may still be in its lobby, titled only "Meet".
 		app, title := a.machine.Class()
 		target := recorder.Target{App: app, Title: title}
@@ -161,8 +159,8 @@ func (a *agent) step(ctx context.Context) {
 	}
 }
 
-// offerClass shows the card with "Record this class". Nothing records until she clicks it; without
-// an overlay there is no way to ask, so the class records as if she had.
+// offerClass shows the card with "Record this class". Nothing records until they click it; without
+// an overlay there is no way to ask, so the class records as if they had.
 func (a *agent) offerClass(app detect.App, title string) {
 	a.log.printf("class detected: %s %q; asking whether to record", app, title)
 	a.wanted.Store(a.pill == nil) // also drops a click that came as the last class ended
@@ -171,7 +169,7 @@ func (a *agent) offerClass(app detect.App, title string) {
 }
 
 // showOffer shows or hides the "Record this class" card, so it leaves with the meeting window and
-// comes back if she rejoins before the class ends.
+// comes back if they rejoin before the class ends.
 func (a *agent) showOffer(app detect.App, show bool) {
 	if a.pill == nil || show == a.offered {
 		return
@@ -185,7 +183,7 @@ func (a *agent) showOffer(app detect.App, show bool) {
 	a.pill.Show()
 }
 
-// record is her "Record this class" click. It runs on the overlay's thread, so it only flags the
+// record is the "Record this class" click. It runs on the overlay's thread, so it only flags the
 // class; the next step starts the recording.
 func (a *agent) record() {
 	if a.wanted.Swap(true) {
@@ -202,7 +200,7 @@ func (a *agent) beginClass(ctx context.Context, target recorder.Target) {
 	}
 	a.log.printf("recording started; mode %s", a.opts.Mode.Mode)
 	desktop.KeepAwake(true)
-	a.warn, a.level = newWarnings(time.Now()), overlay.Normal
+	a.warn, a.level = newWarnings(time.Now(), readSettings().HelpContact), overlay.Normal
 	a.videoCheckedAt, a.blankChecks = time.Now(), 0 // first look 30 s in
 	if a.pill != nil {
 		a.pill.SetStatus(overlay.Normal, "")
@@ -218,7 +216,7 @@ func (a *agent) endClass(ctx context.Context) {
 	}
 	if !a.rec.Recording() {
 		if !wanted {
-			a.log.printf("class ended; not recorded, as she did not ask")
+			a.log.printf("class ended; not recorded, as no one asked")
 		}
 		return
 	}
@@ -238,7 +236,7 @@ func (a *agent) endClass(ctx context.Context) {
 	afterClass(ctx, a.opts.Mode.Mode, class, a.log.printf, processClass)
 }
 
-// updatePill shows what needs her attention, and logs each change.
+// updatePill shows what needs the student's attention, and logs each change.
 func (a *agent) updatePill(ctx context.Context, sample detect.Sample) {
 	if a.warn == nil {
 		return
@@ -322,7 +320,7 @@ func newRecorder(root, url string, logf func(string, ...any)) (*recorder.Recorde
 }
 
 // classWindow is the window to capture now: the app's meeting window, or, when Edge shows another
-// tab mid-class, Edge's visible window, so the recording follows what she sees. "" when neither.
+// tab mid-class, Edge's visible window, so the recording follows what they see. "" when neither.
 func classWindow(app detect.App, observed detect.Observation, sample detect.Sample) (title, class string) {
 	spec, _ := detect.SpecFor(app)
 	meeting := observed.Meeting[app]

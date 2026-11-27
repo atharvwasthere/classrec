@@ -31,7 +31,7 @@ type check struct {
 // logs\selftest-<time>.txt. It fails if any check fails.
 func runSelftest(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("selftest", flag.ContinueOnError)
-	root := fs.String("root", defaultRoot, "")
+	root := fs.String("root", recordingsDir(), "")
 	obsURL := fs.String("obs-url", "ws://localhost:4455", "")
 	if err := fs.Parse(args); err != nil {
 		return err

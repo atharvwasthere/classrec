@@ -20,7 +20,7 @@ import (
 // the agent to start at logon and runs the selftest; a dev build anywhere else only gets the profile.
 func runInstall(ctx context.Context, args []string) error {
 	fs := flag.NewFlagSet("install", flag.ContinueOnError)
-	root := fs.String("root", defaultRoot, "")
+	root := fs.String("root", recordingsDir(), "")
 	if err := fs.Parse(args); err != nil {
 		return err
 	}

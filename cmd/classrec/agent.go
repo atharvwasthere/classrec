@@ -26,7 +26,7 @@ func runAgent(ctx context.Context, args []string) error {
 	debug := fs.Bool("debug-detect", false, "")
 	interval := fs.Duration("interval", 10*time.Second, "")
 	modeFlag := fs.String("mode", "", "")
-	root := fs.String("root", defaultRoot, "")
+	root := fs.String("root", recordingsDir(), "")
 	obsURL := fs.String("obs-url", "ws://localhost:4455", "")
 	background := fs.Bool("background", false, "") // started by the scheduled task: no console window
 	if err := fs.Parse(args); err != nil {

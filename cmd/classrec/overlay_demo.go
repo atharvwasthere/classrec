@@ -18,7 +18,7 @@ var demoStates = []struct {
 }{
 	{"green", overlay.Normal, ""},
 	{"amber", overlay.Amber, chargerText},
-	{"red", overlay.Red, notHearing},
+	{"red", overlay.Red, notHearing + askFor(readSettings().HelpContact)},
 	{"offer", overlay.Offer, "Zoom class detected"},
 }
 

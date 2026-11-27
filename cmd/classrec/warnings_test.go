@@ -17,7 +17,7 @@ import (
 func TestPillWarnings(t *testing.T) {
 	start := time.Date(2026, 11, 25, 14, 0, 0, 0, time.UTC)
 	at := func(sec int) time.Time { return start.Add(time.Duration(sec) * time.Second) }
-	w := newWarnings(start)
+	w := newWarnings(start, "Sam")
 	for _, step := range []struct {
 		s         classSignals
 		wantLevel overlay.Level
@@ -27,12 +27,12 @@ func TestPillWarnings(t *testing.T) {
 		{classSignals{now: at(20), audible: true, onBattery: true}, overlay.Amber, chargerText},
 		{classSignals{now: at(30), audible: true}, overlay.Normal, ""},
 		{classSignals{now: at(60)}, overlay.Normal, ""},                                              // 30 s quiet: a pause, not a problem
-		{classSignals{now: at(90), onBattery: true}, overlay.Red, notHearing},                        // 60 s quiet beats the charger
+		{classSignals{now: at(90), onBattery: true}, overlay.Red, notHearing + " — call Sam"},        // 60 s quiet beats the charger
 		{classSignals{now: at(100), audible: true, skippedFrames: 18}, overlay.Normal, ""},           // 2% in the minute so far: Meet's usual
 		{classSignals{now: at(150), audible: true, skippedFrames: 120}, overlay.Amber, struggleText}, // minute counted: 120 dropped
 		{classSignals{now: at(180), audible: true, skippedFrames: 130}, overlay.Amber, struggleText}, // until the next minute is counted
 		{classSignals{now: at(215), audible: true, skippedFrames: 3}, overlay.Normal, ""},            // new piece: 10 + 3 dropped this minute
-		{classSignals{now: at(220), audible: true, skippedFrames: 3, videoBlank: true, onBattery: true}, overlay.Amber, noVideo},
+		{classSignals{now: at(220), audible: true, skippedFrames: 3, videoBlank: true, onBattery: true}, overlay.Amber, noVideo + " — call Sam"},
 		{classSignals{now: at(230), audible: true, skippedFrames: 3}, overlay.Normal, ""},
 	} {
 		level, text, _ := w.update(step.s)
@@ -69,5 +69,14 @@ func TestBlankVideo(t *testing.T) {
 		if got := blankVideo(tt.frame, tt.err); got != tt.want {
 			t.Errorf("%s: blank %v, want %v", tt.name, got, tt.want)
 		}
+	}
+}
+
+// Promise: without a help contact in settings.json the card asks for help instead of naming anyone.
+func TestWarningsWithoutHelpContact(t *testing.T) {
+	start := time.Date(2026, 11, 25, 14, 0, 0, 0, time.UTC)
+	_, text, _ := newWarnings(start, "").update(classSignals{now: start.Add(time.Minute)})
+	if text != "No class audio — ask for help" {
+		t.Errorf("got %q", text)
 	}
 }

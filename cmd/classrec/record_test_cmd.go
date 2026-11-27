@@ -28,7 +28,7 @@ func runRecordTest(ctx context.Context, args []string) error {
 	app := fs.String("app", "meet", "")
 	seconds := fs.Int("seconds", 30, "")
 	killAt := fs.Int("kill-obs-at", 0, "")
-	root := fs.String("root", defaultRoot, "")
+	root := fs.String("root", recordingsDir(), "")
 	obsURL := fs.String("obs-url", "ws://localhost:4455", "")
 	if err := fs.Parse(args); err != nil {
 		return err

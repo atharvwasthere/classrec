@@ -14,19 +14,40 @@ import (
 )
 
 // defaultSilenceDB is the class-audio level below which the class counts as silent, until
-// `classrec calibrate` has measured her classes.
+// `classrec calibrate` has measured real classes.
 const defaultSilenceDB = -50
+
+// settings are the choices kept in settings.json next to classrec. Every key is optional; the
+// overlay's position and the mode live there too.
+type settings struct {
+	SilenceDB     *float64 `json:"silence_db"`     // set by classrec calibrate
+	RecordingsDir string   `json:"recordings_dir"` // where classes are filed
+	HelpContact   string   `json:"help_contact"`   // who the card says to call when only someone else can fix it
+}
+
+// readSettings reads settings.json; a missing or unreadable file means every default.
+func readSettings() settings {
+	var s settings
+	if content, err := os.ReadFile(settingsPath()); err == nil {
+		_ = json.Unmarshal(content, &s) // a broken file means the defaults, as if it were missing
+	}
+	return s
+}
 
 // silenceDB is the calibrated threshold from settings.json, else the default.
 func silenceDB() float64 {
-	var s struct {
-		SilenceDB *float64 `json:"silence_db"`
+	if s := readSettings(); s.SilenceDB != nil {
+		return *s.SilenceDB
 	}
-	content, err := os.ReadFile(settingsPath())
-	if err != nil || json.Unmarshal(content, &s) != nil || s.SilenceDB == nil {
-		return defaultSilenceDB
+	return defaultSilenceDB
+}
+
+// recordingsDir is where classes are filed: settings.json's recordings_dir, else the Videos folder.
+func recordingsDir() string {
+	if s := readSettings(); s.RecordingsDir != "" {
+		return s.RecordingsDir
 	}
-	return *s.SilenceDB
+	return filepath.Join(os.Getenv("USERPROFILE"), "Videos", "Class Recordings")
 }
 
 // setSetting writes one key of settings.json and keeps the others (mode, overlay position).

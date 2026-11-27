@@ -8,11 +8,11 @@ import (
 	"classrec/internal/overlay"
 )
 
-// What the pill says when something needs her attention.
+// What the pill says when something needs the student's attention.
 const (
 	chargerText  = "Plug in charger"
-	notHearing   = "No class audio — call Adi"
-	noVideo      = "No class video — call Adi"
+	notHearing   = "No class audio" // followed by who to ask, see askFor
+	noVideo      = "No class video"
 	struggleText = "Recording is struggling"
 	silenceLimit = 60 * time.Second
 	// struggleFrames dropped in a minute, a tenth of 15 fps, is when the video visibly stutters.
@@ -32,6 +32,7 @@ type classSignals struct {
 // warnings turns a class's signals into the pill's state. Not hearing the class is red, since
 // a silent recording is worthless; no picture, running on battery or a stuttering video is amber.
 type warnings struct {
+	askFor      string // " — call <help contact>", or " — ask for help" with none
 	lastAudible time.Time
 	lastSkipped int       // OBS's count at the last update
 	minuteStart time.Time // frames are counted a minute at a time
@@ -67,8 +68,18 @@ func sameColour(a, b color.Color) bool {
 	return near(ar, br) && near(ag, bg) && near(ab, bb)
 }
 
-func newWarnings(start time.Time) *warnings {
-	return &warnings{lastAudible: start, minuteStart: start}
+// newWarnings starts counting at start. helpContact is who to call about a problem only someone
+// else can fix; with none the card says to ask for help.
+func newWarnings(start time.Time, helpContact string) *warnings {
+	return &warnings{askFor: askFor(helpContact), lastAudible: start, minuteStart: start}
+}
+
+// askFor is the end of a warning that needs someone else: " — call <help contact>", or " — ask for help".
+func askFor(helpContact string) string {
+	if helpContact == "" {
+		return " — ask for help"
+	}
+	return " — call " + helpContact
 }
 
 // update returns the pill's level and text, and, when a minute has just been counted, how many
@@ -91,9 +102,9 @@ func (w *warnings) update(s classSignals) (level overlay.Level, text string, dro
 
 	switch {
 	case s.now.Sub(w.lastAudible) >= silenceLimit:
-		return overlay.Red, notHearing, droppedLastMinute
+		return overlay.Red, notHearing + w.askFor, droppedLastMinute
 	case s.videoBlank:
-		return overlay.Amber, noVideo, droppedLastMinute
+		return overlay.Amber, noVideo + w.askFor, droppedLastMinute
 	case s.onBattery:
 		return overlay.Amber, chargerText, droppedLastMinute
 	case w.struggling:
