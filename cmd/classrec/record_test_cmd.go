@@ -49,8 +49,11 @@ func runRecordTest(ctx context.Context, args []string) error {
 	pictureBlank := true
 	for s := 1; s <= *seconds && ctx.Err() == nil; s++ {
 		time.Sleep(time.Second)
-		if s == min(5, *seconds) {
-			pictureBlank = blankVideo(rec.VideoFrame(ctx)) // while recording: what OBS sees
+		if s == min(15, *seconds) { // while recording, once the capture has started: what OBS sees
+			frame, err := rec.VideoFrame(ctx)
+			if pictureBlank = blankVideo(frame, err); pictureBlank {
+				logf("no picture: err %v, frame %v", err, frame != nil)
+			}
 		}
 		if s == *killAt {
 			logf("killing obs64.exe")
