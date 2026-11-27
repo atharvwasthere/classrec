@@ -3,8 +3,6 @@ package detect
 import (
 	"bytes"
 	"encoding/json"
-	"os"
-	"path/filepath"
 	"reflect"
 	"testing"
 	"time"
@@ -13,41 +11,56 @@ import (
 const (
 	edgeExe  = `C:\Program Files (x86)\Microsoft\Edge\Application\msedge.exe`
 	zoomExe  = `C:\Users\Admin\AppData\Roaming\Zoom\bin\Zoom.exe`
-	edgeMic  = `C:#Program Files (x86)#Microsoft#Edge#Application#msedge.exe`
-	zoomMic  = `C:#Users#Admin#AppData#Roaming#Zoom#bin#Zoom.exe`
 	meetName = "Meet - xyz-abcd-efg - Personal - Microsoft Edge"
 )
 
-// seen builds an Observation from the meeting windows by app and the apps holding the mic.
-func seen(meeting map[App]string, mic ...App) Observation {
-	o := Observation{Meeting: map[App]string{}, Mic: map[App]bool{}}
+// seen builds an Observation from the title of the window showing each app's call.
+func seen(meeting map[App]string) Observation {
+	o := Observation{Meeting: map[App]string{}}
 	for app, title := range meeting {
 		o.Meeting[app] = title
-	}
-	for _, app := range mic {
-		o.Mic[app] = true
 	}
 	return o
 }
 
 func TestClassify(t *testing.T) {
+	// The Edge window with Meet in it; its tab names are as Edge gave them on 2026-11-27.
+	inCall := Window{Exe: edgeExe, Class: "Chrome_WidgetWin_1", Title: meetName, Visible: true,
+		Tabs: []string{"YouTube", "Meet - xyz-abcd-efg - Microphone recording - Memory usage - 439 MB"}}
+	left := inCall
+	left.Tabs = []string{"Meet - xyz-abcd-efg - Memory usage - 475 MB"}
+	onOtherTab := inCall
+	onOtherTab.Title = "YouTube - Personal - Microsoft Edge"
 	tests := []struct {
 		name string
 		s    Sample
 		want Observation
 	}{
-		{"meet tab", Sample{Windows: []Window{{Exe: edgeExe, Title: meetName, Visible: true}}}, seen(map[App]string{Meet: meetName})},
-		{"meeting is not meet", Sample{Windows: []Window{{Exe: edgeExe, Title: "Meeting notes - Microsoft Edge", Visible: true}}}, seen(nil)},
-		{"meet in another browser", Sample{Windows: []Window{{Exe: `C:\chrome.exe`, Title: meetName}}}, seen(nil)},
+		{"in a meet call", Sample{Windows: []Window{inCall}}, seen(map[App]string{Meet: meetName})},
+		{"in a meet call, looking at another tab", Sample{Windows: []Window{onOtherTab}}, seen(map[App]string{Meet: onOtherTab.Title})},
+		{"left the meet call, tab still open", Sample{Windows: []Window{left}}, seen(nil)},
+		{"meet tab in another browser", Sample{Windows: []Window{{Exe: `C:\chrome.exe`, Title: meetName, Visible: true, Tabs: inCall.Tabs}}}, seen(nil)},
 		{"zoom meeting by class", Sample{Windows: []Window{{Exe: zoomExe, Class: "ConfMultiTabContentWndClass", Title: "Zoom Meeting", Visible: true}}}, seen(map[App]string{Zoom: "Zoom Meeting"})},
 		// After a meeting Zoom stays in the tray and keeps its meeting window, hidden (seen 2026-11-26).
 		{"zoom left in the tray is not a meeting", Sample{Windows: []Window{
 			{Exe: zoomExe, Class: "ConfMultiTabContentWndClass", Title: "Zoom Workplace"},
-			{Exe: edgeExe, Title: meetName, Visible: true},
+			inCall,
 		}}, seen(map[App]string{Meet: meetName})},
 		{"zoom home is not a meeting", Sample{Windows: []Window{{Exe: zoomExe, Class: "ZPPTMainFrmWndClassEx", Title: "Zoom Workplace", Visible: true}}}, seen(nil)},
-		{"mic open", Sample{Mic: []MicUse{{Path: zoomMic, Start: 5}, {Path: edgeMic, Start: 5}}}, seen(nil, Zoom, Meet)},
-		{"mic closed", Sample{Mic: []MicUse{{Path: zoomMic, Start: 5, Stop: 6}, {Path: edgeMic}}}, seen(nil)},
+		// Minimised, Zoom swaps its meeting window for a floating video window; sharing her screen, it
+		// adds a toolbar (seen 2026-11-27).
+		{"zoom minimised", Sample{Windows: []Window{
+			{Exe: zoomExe, Class: "ConfMultiTabContentWndClass", Title: "Zoom Meeting"},
+			{Exe: zoomExe, Class: "ZPFloatVideoWndClass", Title: "Zoom Workplace", Visible: true},
+		}}, seen(map[App]string{Zoom: "Zoom Workplace"})},
+		{"zoom sharing her screen", Sample{Windows: []Window{
+			{Exe: zoomExe, Class: "ConfMultiTabContentWndClass", Title: "Zoom Meeting"},
+			{Exe: zoomExe, Class: "ZPFloatToolbarClass", Title: "Screen sharing meeting controls", Visible: true},
+		}}, seen(map[App]string{Zoom: "Screen sharing meeting controls"})},
+		{"zoom left, its windows hidden", Sample{Windows: []Window{
+			{Exe: zoomExe, Class: "ConfMultiTabContentWndClass", Title: "Zoom Workplace"},
+			{Exe: zoomExe, Class: "ZPFloatVideoWndClass", Title: "Zoom Workplace"},
+		}}, seen(nil)},
 	}
 	for _, tt := range tests {
 		if got := Classify(tt.s); !reflect.DeepEqual(got, tt.want) {
@@ -82,33 +95,21 @@ func run(steps ...step) []Event {
 func at(sec int) time.Time { return t0.Add(time.Duration(sec) * time.Second) }
 
 func TestMachine(t *testing.T) {
-	meet := seen(map[App]string{Meet: "Meet"}, Meet)
-	zoom := seen(map[App]string{Zoom: "Zoom Meeting"}, Zoom)
+	meet := seen(map[App]string{Meet: "Meet"})
+	zoom := seen(map[App]string{Zoom: "Zoom Meeting"})
 	none := seen(nil)
-	audio := seen(nil)
-	audio.AppAudio = true
 	tests := []struct {
 		name  string
 		steps []step
 		want  []Event
 	}{
 		{"blip shorter than hold", []step{{1, meet}, {30, none}}, nil},
-		{"edge mic alone never starts", []step{{60, seen(nil, Meet)}}, nil},
-		{"zoom muted keeps recording", []step{{2, zoom}, {100, seen(map[App]string{Zoom: "Zoom Meeting"})}, {31, none}},
-			[]Event{{"start", at(10), Zoom, "Zoom Meeting"}, {"stop", at(1320), Zoom, "Zoom Meeting"}}},
-		{"rejoin within grace is one class", []step{{10, meet}, {17, none}, {10, meet}, {31, none}},
-			[]Event{{"start", at(10), Meet, "Meet"}, {"stop", at(670), Meet, "Meet"}}},
-		{"rejoin after grace is two classes", []step{{10, meet}, {31, none}, {10, meet}, {31, none}},
-			[]Event{{"start", at(10), Meet, "Meet"}, {"stop", at(400), Meet, "Meet"}, {"start", at(420), Meet, "Meet"}, {"stop", at(810), Meet, "Meet"}}},
-		{"edge mic does not sustain a zoom class", []step{{10, zoom}, {31, seen(nil, Meet)}},
-			[]Event{{"start", at(10), Zoom, "Zoom Meeting"}, {"stop", at(400), Zoom, "Zoom Meeting"}}},
-		{"audio alone does not start a class", []step{{60, audio}}, nil},
-		{"audio keeps a class whose window is gone and mic is off", []step{{10, meet}, {60, audio}, {31, none}},
-			[]Event{{"start", at(10), Meet, "Meet"}, {"stop", at(1000), Meet, "Meet"}}},
-		{"audio blip inside the grace restarts it", []step{{10, meet}, {20, none}, {1, audio}, {31, none}},
-			[]Event{{"start", at(10), Meet, "Meet"}, {"stop", at(610), Meet, "Meet"}}},
-		{"leaving zoom for meet ends zoom at once and starts meet", []step{{10, zoom}, {3, none}, {3, meet}},
-			[]Event{{"start", at(10), Zoom, "Zoom Meeting"}, {"stop", at(130), Zoom, "Zoom Meeting"}, {"start", at(150), Meet, "Meet"}}},
+		{"leaving stops 10 s later", []step{{10, meet}, {3, none}},
+			[]Event{{"start", at(10), Meet, "Meet"}, {"stop", at(110), Meet, "Meet"}}},
+		{"a long class is one recording", []step{{2, zoom}, {100, zoom}, {3, none}},
+			[]Event{{"start", at(10), Zoom, "Zoom Meeting"}, {"stop", at(1030), Zoom, "Zoom Meeting"}}},
+		{"leaving zoom for meet ends zoom and starts meet", []step{{10, zoom}, {4, meet}},
+			[]Event{{"start", at(10), Zoom, "Zoom Meeting"}, {"stop", at(110), Zoom, "Zoom Meeting"}, {"start", at(130), Meet, "Meet"}}},
 	}
 	for _, tt := range tests {
 		if got := run(tt.steps...); !reflect.DeepEqual(got, tt.want) {
@@ -117,20 +118,18 @@ func TestMachine(t *testing.T) {
 	}
 }
 
-// TestReplayKeepsClassWhileAppAudioIsLive checks the audio signal survives the --debug-detect JSONL
-// round trip and decides the stop time: the Meet tab is closed and the mic is off, yet the teacher
-// is still audible for 10 more minutes.
-func TestReplayKeepsClassWhileAppAudioIsLive(t *testing.T) {
+// TestReplayIgnoresClassSound checks, through the --debug-detect JSONL round trip, that the class's
+// sound does not keep a recording going: the Meet tab is closed and the mic is off while OBS still
+// hears audio, and the class ends 10 s later.
+func TestReplayIgnoresClassSound(t *testing.T) {
 	var log bytes.Buffer
 	enc := json.NewEncoder(&log)
-	meetTab := []Window{{Exe: edgeExe, Title: meetName, Visible: true}}
-	for i := 0; i < 101; i++ {
-		s := Sample{Time: t0.Add(time.Duration(i) * 10 * time.Second)}
-		switch {
-		case i < 10: // joining
+	meetTab := []Window{{Exe: edgeExe, Class: "Chrome_WidgetWin_1", Title: meetName, Visible: true,
+		Tabs: []string{"Meet - xyz-abcd-efg - Microphone recording"}}}
+	for i := 0; i < 30; i++ {
+		s := Sample{Time: t0.Add(time.Duration(i) * 10 * time.Second), AppAudioLive: true}
+		if i < 10 { // in the call; then the tab is closed
 			s.Windows = meetTab
-		case i < 70: // tab closed, still listening
-			s.AppAudioLive = i < 70
 		}
 		enc.Encode(s)
 	}
@@ -139,45 +138,9 @@ func TestReplayKeepsClassWhileAppAudioIsLive(t *testing.T) {
 		t.Fatal(err)
 	}
 	got := replay(samples, DefaultConfig)
-	want := []Event{{"start", at(10), Meet, meetName}, {"stop", at(1000), Meet, meetName}}
+	want := []Event{{"start", at(10), Meet, meetName}, {"stop", at(110), Meet, meetName}}
 	if !reflect.DeepEqual(got, want) {
 		t.Fatalf("got %+v\nwant %+v", got, want)
-	}
-}
-
-// TestReplay runs the rules over recorded logs. Real --debug-detect logs go in testdata with their expected events.
-func TestReplay(t *testing.T) {
-	ist := time.FixedZone("IST", 5*3600+1800)
-	d := func(h, m, s int) time.Time { return time.Date(2026, 11, 20, h, m, s, 0, ist) }
-	tests := []struct {
-		file string
-		want []Event
-	}{
-		// synthetic: Meet from 18:01, tab switch with mic on 18:20, muted and away 18:25-18:27, leaves 18:50
-		{"synthetic_meet_tabswitch_mute.jsonl", []Event{
-			{"start", d(18, 1, 10), Meet, meetName},
-			{"stop", d(18, 55, 0), Meet, meetName},
-		}},
-	}
-	for _, tt := range tests {
-		f, err := os.Open(filepath.Join("testdata", tt.file))
-		if err != nil {
-			t.Fatal(err)
-		}
-		samples, err := readJSONL(f)
-		f.Close()
-		if err != nil {
-			t.Fatalf("%s: %v", tt.file, err)
-		}
-		got := replay(samples, DefaultConfig)
-		if len(got) != len(tt.want) {
-			t.Fatalf("%s: got %+v, want %+v", tt.file, got, tt.want)
-		}
-		for i := range got {
-			if got[i].Kind != tt.want[i].Kind || !got[i].At.Equal(tt.want[i].At) || got[i].App != tt.want[i].App || got[i].Title != tt.want[i].Title {
-				t.Errorf("%s event %d: got %+v, want %+v", tt.file, i, got[i], tt.want[i])
-			}
-		}
 	}
 }
 
@@ -189,14 +152,10 @@ func TestClassAppsOnlyStripsOtherApps(t *testing.T) {
 			{Exe: `C:\Program Files\WhatsApp\WhatsApp.exe`, Title: "WhatsApp - private chat"},
 			{Exe: zoomExe, Title: "Zoom Meeting"},
 		},
-		Mic: []MicUse{{Path: zoomMic, Start: 5}, {Path: `C:#Apps#Discord.exe`, Start: 5}},
 	}
 	got := s.ClassAppsOnly()
 	if len(got.Windows) != 2 || got.Windows[0].Exe != edgeExe || got.Windows[1].Exe != zoomExe {
 		t.Errorf("windows %+v", got.Windows)
-	}
-	if len(got.Mic) != 1 || got.Mic[0].Path != zoomMic {
-		t.Errorf("mic %+v", got.Mic)
 	}
 }
 

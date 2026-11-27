@@ -1,4 +1,4 @@
-// Package detect decides from window and microphone samples when a class starts and ends.
+// Package detect decides from window and Edge tab samples when a class starts and ends.
 // Everything here is pure, so recorded --debug-detect logs replay in tests.
 package detect
 
@@ -7,17 +7,15 @@ import (
 	"encoding/json"
 	"fmt"
 	"io"
+	"slices"
 	"strings"
 	"time"
-	"unicode"
-	"unicode/utf8"
 )
 
 // Sample is one observation of the desktop, as written to the --debug-detect JSONL log.
 type Sample struct {
 	Time    time.Time `json:"t"`
 	Windows []Window  `json:"windows"`
-	Mic     []MicUse  `json:"mic"`
 	// AppAudioLive is true when OBS hears sound from the class app's audio input, which the
 	// recorder fills in while it records. Absent from logs made before the recorder existed.
 	AppAudioLive bool `json:"audio,omitempty"`
@@ -32,20 +30,9 @@ type Window struct {
 	Minimized  bool   `json:"minimized,omitempty"`
 	Cloaked    bool   `json:"cloaked,omitempty"`
 	Foreground bool   `json:"fg,omitempty"`
-}
-
-// MicUse is one CapabilityAccessManager microphone entry; Path uses # as the separator, as the registry does.
-type MicUse struct {
-	Path  string `json:"path"`
-	Start int64  `json:"start"` // LastUsedTimeStart, FILETIME
-	Stop  int64  `json:"stop"`  // LastUsedTimeStop, FILETIME; 0 while the mic is open
-}
-
-// InUse reports whether the app has the mic open right now.
-func (m MicUse) InUse() bool {
-	everUsed := m.Start != 0
-	notStopped := m.Stop == 0
-	return everUsed && notStopped
+	// Tabs are the names Edge gives its tabs, for an Edge window: every tab, showing or not, with
+	// "- Microphone recording" or "- Camera recording" added while a tab uses them.
+	Tabs []string `json:"tabs,omitempty"`
 }
 
 // App is a class app.
@@ -62,24 +49,29 @@ type AppSpec struct {
 	App         App
 	Exe         string            // file name of its exe, matched ignoring case
 	WindowClass string            // window class of its meeting window, for OBS's window capture
-	Matches     func(Window) bool // whether a window of Exe is a meeting
+	Matches     func(Window) bool // whether a window of Exe shows her in the call
 	SceneName   string            // the OBS scene the agent records it with
 }
 
-// UNVERIFIED: the Zoom meeting window's class and title come from Zoom 5.x/6.x reports,
-// to be checked against a real --debug-detect log.
+// zoomMeetingClass is the class of Zoom's meeting window: visible while she is in a meeting, hidden
+// (titled "Zoom Workplace") once she leaves and Zoom stays in the tray (seen 2026-11-26).
 const zoomMeetingClass = "ConfMultiTabContentWndClass"
+
+// zoomInCallClasses are Zoom's windows that are on screen only while she is in a meeting: the
+// meeting window; the small floating video window, which replaces it when she minimises the
+// meeting; and the toolbar shown while she shares her screen, when the meeting window is hidden
+// too (seen 2026-11-27). A muted Zoom does not hold the mic, so the mic cannot tell.
+var zoomInCallClasses = []string{zoomMeetingClass, "ZPFloatVideoWndClass", "ZPFloatToolbarClass"}
 
 // Apps lists the class apps. When two show a meeting the first wins; she attends one class at a time.
 var Apps = []AppSpec{
 	{
 		App: Zoom, Exe: "Zoom.exe", WindowClass: zoomMeetingClass, SceneName: "classrec - Zoom",
-		Matches: func(w Window) bool { return w.Class == zoomMeetingClass || strings.Contains(w.Title, "Zoom Meeting") },
+		Matches: func(w Window) bool { return slices.Contains(zoomInCallClasses, w.Class) },
 	},
 	{
-		// Edge opens the mic for other sites too, so only the "Meet" title marks a class.
 		App: Meet, Exe: "msedge.exe", WindowClass: "Chrome_WidgetWin_1", SceneName: "classrec - Meet",
-		Matches: func(w Window) bool { return hasWord(w.Title, "Meet") },
+		Matches: func(w Window) bool { return slices.ContainsFunc(w.Tabs, inMeetCall) },
 	},
 }
 
@@ -95,13 +87,11 @@ func SpecFor(app App) (spec AppSpec, ok bool) {
 
 // Observation is what one Sample says about the class apps.
 type Observation struct {
-	Meeting  map[App]string // title of each app's meeting window, if it shows one
-	Mic      map[App]bool   // apps holding the mic open
-	AppAudio bool           // the recorded app's audio is audible in OBS
+	Meeting map[App]string // title of the window showing each app's call, if she is in one
 }
 
-// ClassAppsOnly is s without the windows and mic entries of any app that is not a class app, so a
-// log of it can leave the laptop without showing what else she had open.
+// ClassAppsOnly is s without the windows of any app that is not a class app, so a log of it can
+// leave the laptop without showing what else she had open.
 func (s Sample) ClassAppsOnly() Sample {
 	isClassApp := func(path, separators string) bool {
 		for _, spec := range Apps {
@@ -117,29 +107,19 @@ func (s Sample) ClassAppsOnly() Sample {
 			out.Windows = append(out.Windows, w)
 		}
 	}
-	for _, m := range s.Mic {
-		if isClassApp(m.Path, "#") {
-			out.Mic = append(out.Mic, m)
-		}
-	}
 	return out
 }
 
 // Classify reduces a Sample to the signals the state machine uses.
 func Classify(s Sample) Observation {
-	o := Observation{Meeting: map[App]string{}, Mic: map[App]bool{}, AppAudio: s.AppAudioLive}
+	o := Observation{Meeting: map[App]string{}}
 	for _, spec := range Apps {
 		for _, w := range s.Windows {
-			// Only a window on screen is a meeting: Zoom keeps its meeting window, hidden, in the
-			// tray after a meeting ends.
+			// Only a window on screen counts: Zoom keeps its meeting windows, hidden, in the tray
+			// after a meeting ends.
 			if w.Visible && isExe(w.Exe, `\/`, spec.Exe) && spec.Matches(w) {
 				o.Meeting[spec.App] = w.Title
 				break
-			}
-		}
-		for _, m := range s.Mic {
-			if m.InUse() && isExe(m.Path, "#", spec.Exe) {
-				o.Mic[spec.App] = true
 			}
 		}
 	}
@@ -156,31 +136,11 @@ func isExe(path, separators, exe string) bool {
 	return strings.EqualFold(fileName, exe)
 }
 
-// hasWord matches word as a whole word, so "Meet - abc" matches and "Meeting notes" does not.
-func hasWord(text, word string) bool {
-	searchFrom := 0
-	for {
-		found := strings.Index(text[searchFrom:], word)
-		if found < 0 {
-			return false
-		}
-		start := searchFrom + found
-		end := start + len(word)
-		if !letterBefore(text, start) && !letterAfter(text, end) {
-			return true
-		}
-		searchFrom = end
-	}
-}
-
-func letterBefore(text string, i int) bool {
-	r, _ := utf8.DecodeLastRuneInString(text[:i])
-	return unicode.IsLetter(r)
-}
-
-func letterAfter(text string, i int) bool {
-	r, _ := utf8.DecodeRuneInString(text[i:])
-	return unicode.IsLetter(r)
+// inMeetCall reports whether an Edge tab is in a Meet call. A Meet tab is named "Meet - abc-defg-hij"
+// in the call and after leaving it alike; only in the call does Edge add "Microphone recording" or
+// "Camera recording", and it keeps doing so while she is muted with the camera off (seen 2026-11-27).
+func inMeetCall(tab string) bool {
+	return strings.HasPrefix(tab, "Meet - ") && strings.Contains(tab, " recording")
 }
 
 // Phase is where the state machine is.
@@ -200,8 +160,8 @@ type Config struct {
 	Grace time.Duration // recording stops only after the class has been gone this long
 }
 
-// DefaultConfig starts a class after 10 s of meeting window and ends it 5 min after every sign of it is gone.
-var DefaultConfig = Config{Hold: 10 * time.Second, Grace: 5 * time.Minute}
+// DefaultConfig starts a class after she has been in a call for 10 s and ends it 10 s after she leaves.
+var DefaultConfig = Config{Hold: 10 * time.Second, Grace: 10 * time.Second}
 
 // EventKind says whether recording should start or stop.
 type EventKind string
@@ -222,9 +182,9 @@ type Event struct {
 
 // Machine is the detection state machine.
 //
-// A class can only start from a meeting window, because Edge opens the mic for other sites too.
-// Once recording, the app's mic alone keeps it going, so a tab switch in Edge doesn't end it,
-// and the window alone keeps it going, so muting doesn't end it.
+// A class starts when she has been in a call for Hold and ends when she has been out of it for
+// Grace. Being in a call is the app's own sign of it (see Apps), so muting, minimising, sharing her
+// screen or looking at another Edge tab do not end it.
 type Machine struct {
 	cfg   Config
 	phase Phase
@@ -295,10 +255,7 @@ func (m *Machine) stepEnding(t time.Time, o Observation) *Event {
 		m.phase = Recording
 		return nil
 	}
-	// A meeting in another app means she moved on: end this class now, not after the grace.
-	app, _, found := startSignal(o)
-	movedOn := found && app != m.app
-	if goneFor := t.Sub(m.since); goneFor < m.cfg.Grace && !movedOn {
+	if goneFor := t.Sub(m.since); goneFor < m.cfg.Grace {
 		return nil
 	}
 	stop := m.event(Stop, t)
@@ -317,15 +274,14 @@ func (m *Machine) reset() {
 	m.title = ""
 }
 
-// classStillOn reports whether the class is still going: the app shows its meeting window, holds the
-// mic, or its audio is audible in OBS. Any one is enough, so a closed window with the teacher still
-// talking keeps the recording, and so does a muted mic.
+// classStillOn reports whether she is still in the class's call. Neither the mic nor the class's
+// sound counts: leaving the call (Zoom left in the tray, a Meet tab that says she left) ends the
+// class 10 s later.
 func (m *Machine) classStillOn(o Observation) bool {
-	return o.AppAudio || o.Meeting[m.app] != "" || o.Mic[m.app]
+	return o.Meeting[m.app] != ""
 }
 
-// startSignal is the first app, in Apps order, showing a meeting window. Only a window starts a
-// class: Edge opens the mic for other sites too.
+// startSignal is the first app, in Apps order, whose call she is in.
 func startSignal(o Observation) (app App, title string, found bool) {
 	for _, spec := range Apps {
 		if title := o.Meeting[spec.App]; title != "" {

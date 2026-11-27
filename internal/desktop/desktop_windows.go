@@ -1,4 +1,4 @@
-// Package desktop reads the windows and microphone state that class detection runs on.
+// Package desktop reads the windows and Edge tabs that class detection runs on.
 package desktop
 
 import (
@@ -8,12 +8,9 @@ import (
 	"unsafe"
 
 	"golang.org/x/sys/windows"
-	"golang.org/x/sys/windows/registry"
 
 	"classrec/internal/detect"
 )
-
-const micKey = `Software\Microsoft\Windows\CurrentVersion\CapabilityAccessManager\ConsentStore\microphone\NonPackaged`
 
 var (
 	user32               = windows.NewLazySystemDLL("user32.dll")
@@ -46,24 +43,9 @@ func PrimaryDisplay() (width, height int) {
 	return int(w), int(h)
 }
 
-// MicReadable checks that Windows' record of which apps use the mic can be read; detection needs it.
-func MicReadable() error {
-	key, err := registry.OpenKey(registry.CURRENT_USER, micKey, registry.ENUMERATE_SUB_KEYS)
-	if err != nil {
-		return err
-	}
-	defer key.Close()
-	_, err = key.ReadSubKeyNames(-1)
-	return err
-}
-
-// Snapshot observes all titled top-level windows and the mic entries of interest.
+// Snapshot observes all titled top-level windows, and the tabs of Edge's.
 func Snapshot(now time.Time) detect.Sample {
-	return detect.Sample{
-		Time:    now,
-		Windows: describeWindows(listTopLevelWindows()),
-		Mic:     micNow(),
-	}
+	return detect.Sample{Time: now, Windows: describeWindows(listTopLevelWindows())}
 }
 
 func listTopLevelWindows() []windows.HWND {
@@ -90,10 +72,16 @@ func describeWindows(hwnds []windows.HWND) []detect.Window {
 		if !shouldLog(visible, exe) {
 			continue
 		}
+		class := className(hwnd)
+		var tabs []string
+		if visible && isEdgeWindow(exe, class) {
+			tabs = tabNames(hwnd)
+		}
 		described = append(described, detect.Window{
 			Exe:        exe,
 			Title:      title,
-			Class:      className(hwnd),
+			Class:      class,
+			Tabs:       tabs,
 			Visible:    visible,
 			Minimized:  isMinimized(hwnd),
 			Cloaked:    isCloaked(hwnd),
@@ -123,9 +111,15 @@ func ownerExe(hwnd windows.HWND, exeByProcess map[uint32]string) string {
 	return exe
 }
 
-// isClassApp reports whether a path (with \ or / separators, or # as in the registry) is Zoom or Edge.
+// isEdgeWindow reports whether a window is an Edge browser window, the kind that has tabs.
+func isEdgeWindow(exe, class string) bool {
+	fileName := exe[strings.LastIndexAny(exe, `\/`)+1:]
+	return class == "Chrome_WidgetWin_1" && strings.EqualFold(fileName, "msedge.exe")
+}
+
+// isClassApp reports whether an exe path is Zoom or Edge.
 func isClassApp(path string) bool {
-	lastSeparator := strings.LastIndexAny(path, `\/#`)
+	lastSeparator := strings.LastIndexAny(path, `\/`)
 	fileName := strings.ToLower(path[lastSeparator+1:])
 	return fileName == "zoom.exe" || fileName == "msedge.exe"
 }
@@ -173,39 +167,4 @@ func exePath(pid uint32) string {
 		return ""
 	}
 	return windows.UTF16ToString(buf[:size])
-}
-
-// micNow returns the Zoom and Edge entries, plus any other app that has the mic open.
-func micNow() []detect.MicUse {
-	appsKey, err := registry.OpenKey(registry.CURRENT_USER, micKey, registry.ENUMERATE_SUB_KEYS)
-	if err != nil {
-		return nil
-	}
-	defer appsKey.Close()
-	appNames, err := appsKey.ReadSubKeyNames(-1)
-	if err != nil {
-		return nil
-	}
-	var entries []detect.MicUse
-	for _, appName := range appNames {
-		entry, ok := readMicEntry(appsKey, appName)
-		if !ok {
-			continue
-		}
-		if entry.InUse() || isClassApp(appName) {
-			entries = append(entries, entry)
-		}
-	}
-	return entries
-}
-
-func readMicEntry(appsKey registry.Key, appName string) (detect.MicUse, bool) {
-	appKey, err := registry.OpenKey(appsKey, appName, registry.QUERY_VALUE)
-	if err != nil {
-		return detect.MicUse{}, false
-	}
-	defer appKey.Close()
-	start, _, _ := appKey.GetIntegerValue("LastUsedTimeStart")
-	stop, _, _ := appKey.GetIntegerValue("LastUsedTimeStop")
-	return detect.MicUse{Path: appName, Start: int64(start), Stop: int64(stop)}, true
 }

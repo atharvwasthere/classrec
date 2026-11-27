@@ -35,7 +35,8 @@ recordings or transcripts.
 
 1. **Read the report.** Open the latest files in `D:\Class Recordings\_reports\`: `selftest-*.txt`,
    `class <class>.log` and `detect-<date>.jsonl`. A detect log replays in tests: copy it to
-   `internal/detect/testdata/`, add its expected events to `TestReplay`, and it reproduces the bug.
+   `internal/detect/testdata/` and replay it with `readJSONL` and `replay`, as
+   `TestReplayIgnoresClassSound` does, to reproduce the bug.
 2. **Fix it** in a cloud session on `atharvwasthere/classrec`. CI (vet, lint, tests on Linux and
    Windows) must pass.
 3. **Tag a release:** `git tag v0.1.1 && git push origin v0.1.1`. CI builds `classrec.exe` and

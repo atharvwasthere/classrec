@@ -41,7 +41,6 @@ func runSelftest(ctx context.Context, args []string) error {
 			return "", boolErr(overlay.DPIAwareness(), "the manifest did not take effect")
 		}},
 		{"overlay never takes focus", checkOverlayFocus},
-		{"mic record readable", func(context.Context) (string, error) { return "", desktop.MicReadable() }},
 		{"obs records video and audio", func(ctx context.Context) (string, error) { return checkOBS(ctx, *root, *obsURL) }},
 		{"keep-awake", checkKeepAwake},
 		{"scheduled task runs as " + currentUser(), checkTask},
