@@ -10,12 +10,14 @@ import (
 
 // What the pill says when something needs her attention.
 const (
-	chargerText   = "Plug in charger"
-	notHearing    = "No class audio — call Adi"
-	noVideo       = "No class video — call Adi"
-	struggleText  = "Recording is struggling"
-	silenceLimit  = 60 * time.Second
-	struggleHolds = time.Minute // how long the amber stays after OBS last dropped frames
+	chargerText  = "Plug in charger"
+	notHearing   = "No class audio — call Adi"
+	noVideo      = "No class video — call Adi"
+	struggleText = "Recording is struggling"
+	silenceLimit = 60 * time.Second
+	// struggleFrames dropped in a minute, a tenth of 15 fps, is when the video visibly stutters.
+	// Meet in Edge costs OBS about 2% of frames on this laptop, which no one sees (2026-11-27).
+	struggleFrames = 90
 )
 
 // classSignals is what the agent sees about a class in progress at one moment.
@@ -28,11 +30,13 @@ type classSignals struct {
 }
 
 // warnings turns a class's signals into the pill's state. Not hearing the class is red, since
-// a silent recording is worthless; running on battery or OBS dropping frames is amber.
+// a silent recording is worthless; no picture, running on battery or a stuttering video is amber.
 type warnings struct {
-	lastAudible   time.Time
-	lastSkipped   int
-	lastStruggled time.Time
+	lastAudible time.Time
+	lastSkipped int       // OBS's count at the last update
+	minuteStart time.Time // frames are counted a minute at a time
+	minuteDrops int       // frames OBS dropped so far this minute
+	struggling  bool      // last minute's drops reached struggleFrames
 }
 
 // blankVideo reports whether OBS's frame of the class window shows no picture: OBS could not render
@@ -63,28 +67,37 @@ func sameColour(a, b color.Color) bool {
 	return near(ar, br) && near(ag, bg) && near(ab, bb)
 }
 
-func newWarnings(start time.Time) *warnings { return &warnings{lastAudible: start} }
+func newWarnings(start time.Time) *warnings {
+	return &warnings{lastAudible: start, minuteStart: start}
+}
 
-// update returns the pill's level and text, and whether OBS dropped frames since the last update.
-func (w *warnings) update(s classSignals) (overlay.Level, string, bool) {
+// update returns the pill's level and text, and, when a minute has just been counted, how many
+// frames OBS dropped in it (0 otherwise).
+func (w *warnings) update(s classSignals) (level overlay.Level, text string, droppedLastMinute int) {
 	if s.audible {
 		w.lastAudible = s.now
 	}
-	dropped := s.skippedFrames > w.lastSkipped
-	if dropped {
-		w.lastStruggled = s.now
+	if s.skippedFrames >= w.lastSkipped {
+		w.minuteDrops += s.skippedFrames - w.lastSkipped
+	} else {
+		w.minuteDrops += s.skippedFrames // a new piece starts counting at 0 again
 	}
-	w.lastSkipped = s.skippedFrames // a new piece starts counting at 0 again
+	w.lastSkipped = s.skippedFrames
+	if s.now.Sub(w.minuteStart) >= time.Minute {
+		droppedLastMinute = w.minuteDrops
+		w.struggling = w.minuteDrops >= struggleFrames
+		w.minuteStart, w.minuteDrops = s.now, 0
+	}
 
 	switch {
 	case s.now.Sub(w.lastAudible) >= silenceLimit:
-		return overlay.Red, notHearing, dropped
+		return overlay.Red, notHearing, droppedLastMinute
 	case s.videoBlank:
-		return overlay.Amber, noVideo, dropped
+		return overlay.Amber, noVideo, droppedLastMinute
 	case s.onBattery:
-		return overlay.Amber, chargerText, dropped
-	case !w.lastStruggled.IsZero() && s.now.Sub(w.lastStruggled) < struggleHolds:
-		return overlay.Amber, struggleText, dropped
+		return overlay.Amber, chargerText, droppedLastMinute
+	case w.struggling:
+		return overlay.Amber, struggleText, droppedLastMinute
 	}
-	return overlay.Normal, "", dropped
+	return overlay.Normal, "", droppedLastMinute
 }

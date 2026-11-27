@@ -248,8 +248,8 @@ func (a *agent) updatePill(ctx context.Context, sample detect.Sample) {
 		now: sample.Time, audible: sample.AppAudioLive, onBattery: desktop.OnBattery(), skippedFrames: skipped,
 		videoBlank: a.checkVideo(ctx, sample.Time),
 	})
-	if dropped {
-		a.log.printf("obs dropped frames: %d so far in this piece", skipped)
+	if dropped > 0 {
+		a.log.printf("obs dropped %d of the last minute's %d frames", dropped, 60*recorder.FPS)
 	}
 	if level != a.level {
 		a.log.printf("pill: %v %s", level, text)

@@ -12,7 +12,8 @@ import (
 )
 
 // Promise: the pill turns red after a minute of not hearing the class, amber when OBS records no
-// picture, on battery or while OBS drops frames, and back to normal when things recover.
+// picture, on battery or when a tenth of a minute's frames are dropped (not Meet's usual 2%), and back
+// to normal when things recover.
 func TestPillWarnings(t *testing.T) {
 	start := time.Date(2026, 11, 25, 14, 0, 0, 0, time.UTC)
 	at := func(sec int) time.Time { return start.Add(time.Duration(sec) * time.Second) }
@@ -25,14 +26,14 @@ func TestPillWarnings(t *testing.T) {
 		{classSignals{now: at(10), audible: true}, overlay.Normal, ""},
 		{classSignals{now: at(20), audible: true, onBattery: true}, overlay.Amber, chargerText},
 		{classSignals{now: at(30), audible: true}, overlay.Normal, ""},
-		{classSignals{now: at(60)}, overlay.Normal, ""},                       // 30 s quiet: a pause, not a problem
-		{classSignals{now: at(90), onBattery: true}, overlay.Red, notHearing}, // 60 s quiet beats the charger
-		{classSignals{now: at(100), audible: true, skippedFrames: 40}, overlay.Amber, struggleText},
-		{classSignals{now: at(130), audible: true, skippedFrames: 40}, overlay.Amber, struggleText}, // still within the minute
-		{classSignals{now: at(170), audible: true, skippedFrames: 40}, overlay.Normal, ""},
-		{classSignals{now: at(180), audible: true, skippedFrames: 3}, overlay.Normal, ""}, // new piece, counter restarted
-		{classSignals{now: at(190), audible: true, videoBlank: true, onBattery: true}, overlay.Amber, noVideo},
-		{classSignals{now: at(200), audible: true}, overlay.Normal, ""},
+		{classSignals{now: at(60)}, overlay.Normal, ""},                                              // 30 s quiet: a pause, not a problem
+		{classSignals{now: at(90), onBattery: true}, overlay.Red, notHearing},                        // 60 s quiet beats the charger
+		{classSignals{now: at(100), audible: true, skippedFrames: 18}, overlay.Normal, ""},           // 2% in the minute so far: Meet's usual
+		{classSignals{now: at(150), audible: true, skippedFrames: 120}, overlay.Amber, struggleText}, // minute counted: 120 dropped
+		{classSignals{now: at(180), audible: true, skippedFrames: 130}, overlay.Amber, struggleText}, // until the next minute is counted
+		{classSignals{now: at(215), audible: true, skippedFrames: 3}, overlay.Normal, ""},            // new piece: 10 + 3 dropped this minute
+		{classSignals{now: at(220), audible: true, skippedFrames: 3, videoBlank: true, onBattery: true}, overlay.Amber, noVideo},
+		{classSignals{now: at(230), audible: true, skippedFrames: 3}, overlay.Normal, ""},
 	} {
 		level, text, _ := w.update(step.s)
 		if level != step.wantLevel || text != step.wantText {
