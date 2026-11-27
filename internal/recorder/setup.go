@@ -160,14 +160,7 @@ func setUpScene(ctx context.Context, c sceneSetup, t Target, canvas [2]int) (aud
 	if err := ignoreExists(c.CreateScene(ctx, scene)); err != nil {
 		return "", err
 	}
-	window := windowSpec(spec, t)
-	for _, in := range []struct {
-		name, kind string
-		settings   map[string]any
-	}{
-		{video, "window_capture", map[string]any{"window": window, "priority": windowPriorityExe, "method": windowCaptureWGC, "cursor": false}},
-		{audio, "wasapi_process_output_capture", map[string]any{"window": window, "priority": windowPriorityExe}},
-	} {
+	for _, in := range captureInputs(spec, t) {
 		err := ignoreExists(c.CreateInput(ctx, scene, in.name, in.kind, in.settings))
 		if err == nil {
 			err = c.SetInputSettings(ctx, in.name, in.settings) // an existing input still points at last class's window
@@ -180,6 +173,21 @@ func setUpScene(ctx context.Context, c sceneSetup, t Target, canvas [2]int) (aud
 		return audio, err
 	}
 	return audio, c.SetCurrentScene(ctx, scene)
+}
+
+// captureInput is one of the two OBS inputs that capture the class window: its picture and its sound.
+type captureInput struct {
+	name, kind string
+	settings   map[string]any
+}
+
+// captureInputs are the inputs that capture t's window, in the app's scene.
+func captureInputs(spec detect.AppSpec, t Target) []captureInput {
+	window := windowSpec(spec, t)
+	return []captureInput{
+		{spec.SceneName + " video", "window_capture", map[string]any{"window": window, "priority": windowPriorityExe, "method": windowCaptureWGC, "cursor": false}},
+		{spec.SceneName + " audio", "wasapi_process_output_capture", map[string]any{"window": window, "priority": windowPriorityExe}},
+	}
 }
 
 // fitToCanvas scales the captured window to sit whole inside the canvas, shape kept, centred.

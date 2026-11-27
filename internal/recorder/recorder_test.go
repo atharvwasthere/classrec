@@ -160,6 +160,22 @@ func checkRecordedWhole(t *testing.T, h *harness, scene string, canvas [2]int, w
 	}
 }
 
+// Promise: when Edge renames the class window (lobby to call, or another tab), picture and sound
+// follow it, since OBS finds an Edge window only by its exact title.
+func TestCaptureFollowsTheRenamedClassWindow(t *testing.T) {
+	h := newHarness(t, 1920, 1080)
+	h.begin(Target{App: detect.Meet, Title: "Meet - Preeti - Microsoft Edge"})
+	if err := h.rec.Follow(context.Background(), "Meet - xyz-abcd-efg - Preeti - Microsoft Edge", "Chrome_WidgetWin_1"); err != nil {
+		t.Fatal(err)
+	}
+	st := h.fake.State()
+	for _, input := range []string{"classrec - Meet video", "classrec - Meet audio"} {
+		if got := st.Inputs[input].Settings["window"]; got != "Meet - xyz-abcd-efg - Preeti - Microsoft Edge:Chrome_WidgetWin_1:msedge.exe" {
+			t.Errorf("%s captures %q", input, got)
+		}
+	}
+}
+
 // Promise: a class is never skipped over a setup step OBS refuses; only StartRecord failing stops it.
 func TestSetupProblemsNeverSkipAClass(t *testing.T) {
 	h := newHarness(t, 1920, 1080)

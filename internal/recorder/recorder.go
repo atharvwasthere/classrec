@@ -165,6 +165,28 @@ func (r *Recorder) Tick(ctx context.Context) error {
 	return r.startPiece(ctx)
 }
 
+// Follow points the capture at the class window's current title. Edge renames its window when
+// Meet moves from the lobby into the call and when she switches tabs, and OBS finds an Edge
+// window only by its exact title: without this, picture and sound go blank (seen 2026-11-27).
+func (r *Recorder) Follow(ctx context.Context, title, class string) error {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if !r.active || title == "" || title == r.target.Title || !r.alive() {
+		return nil
+	}
+	spec, ok := detect.SpecFor(r.target.App)
+	if !ok {
+		return fmt.Errorf("unknown app %q", r.target.App)
+	}
+	r.cfg.Log("the class window is now %q; capturing it", title)
+	r.target.Title, r.target.Class = title, class
+	var errs []error
+	for _, in := range captureInputs(spec, r.target) {
+		errs = append(errs, r.client.SetInputSettings(ctx, in.name, in.settings))
+	}
+	return errors.Join(errs...)
+}
+
 // End stops the recording and files the class. If the connection dropped it reconnects, without
 // starting OBS, to stop the recording properly; only if OBS is really gone does it take the files
 // it left in staging.

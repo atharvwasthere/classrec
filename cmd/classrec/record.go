@@ -128,6 +128,11 @@ func (a *agent) step(ctx context.Context) {
 	case event != nil && event.Kind == detect.Start:
 		a.offerClass(event.App, event.Title)
 	case a.rec.Recording():
+		app, _ := a.machine.Class()
+		title, class := classWindow(app, observed, sample)
+		if err := a.rec.Follow(ctx, title, class); err != nil {
+			a.log.printf("could not point obs at the renamed class window: %v", err)
+		}
 		if err := a.rec.Tick(ctx); err != nil {
 			a.log.printf("could not keep the recording going: %v", err)
 		}
@@ -271,6 +276,20 @@ func newRecorder(root, url string, logf func(string, ...any)) (*recorder.Recorde
 		SilenceDB:  silenceDB(),
 		Log:        logf,
 	}), nil
+}
+
+// classWindow is the window to capture now: the app's meeting window, or, when Edge shows another
+// tab mid-class, Edge's visible window, so the recording follows what she sees. "" when neither.
+func classWindow(app detect.App, observed detect.Observation, sample detect.Sample) (title, class string) {
+	spec, _ := detect.SpecFor(app)
+	meeting := observed.Meeting[app]
+	for _, w := range sample.Windows {
+		sameApp := strings.EqualFold(filepath.Base(w.Exe), spec.Exe) && w.Class == spec.WindowClass
+		if meeting != "" && w.Title == meeting || meeting == "" && sameApp && w.Visible && !w.Minimized && w.Title != "" {
+			return w.Title, w.Class
+		}
+	}
+	return "", ""
 }
 
 // targetFor finds the named meeting window, to tell OBS which window to capture.
