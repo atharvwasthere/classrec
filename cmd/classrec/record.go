@@ -67,6 +67,11 @@ func runRecordLoop(ctx context.Context, opts recordOptions) error {
 	if moved, still := rec.RetryPending(ctx); moved+still > 0 {
 		log.printf("files left in staging by an earlier run: %d filed, %d still stuck", moved, still)
 	}
+	if class, ok, err := rec.StopLeftover(ctx); ok {
+		log.printf("an earlier run left obs recording; stopped it and filed it in %s (%d file(s), %d left in staging)", class.Dir, len(class.Files), class.Pending)
+	} else if err != nil {
+		log.printf("checking for a recording an earlier run left going: %v", err)
+	}
 
 	updates, err := newUpdater(log.printf)
 	if err != nil {

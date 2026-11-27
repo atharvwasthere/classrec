@@ -155,7 +155,11 @@ func addPending(staging string, m pendingMove) error {
 
 // classFolderName is "<YYYY-MM-DD> <Day> - <title> (<Zoom|Meet>)".
 func classFolderName(began time.Time, app detect.App, windowTitle string) string {
-	return fmt.Sprintf("%s %s - %s (%s)", began.Format("2006-01-02"), began.Weekday(), sanitizeTitle(windowTitle), app)
+	name := fmt.Sprintf("%s %s - %s", began.Format("2006-01-02"), began.Weekday(), sanitizeTitle(windowTitle))
+	if app == "" {
+		return name // a recording left running: which app it was is not known
+	}
+	return fmt.Sprintf("%s (%s)", name, app)
 }
 
 // sanitizeTitle turns a meeting window title into a short, safe folder name part: the "Meet - "

@@ -141,8 +141,7 @@ func setRecordFolder(ctx context.Context, c folderSetup, staging string) error {
 	if err != nil {
 		return err
 	}
-	clean := func(p string) string { return strings.ToLower(filepath.Clean(filepath.FromSlash(p))) }
-	if clean(got) != clean(staging) {
+	if !samePath(got, staging) {
 		return fmt.Errorf("obs records into %q, not %q", got, staging)
 	}
 	return nil
@@ -188,6 +187,12 @@ func captureInputs(spec detect.AppSpec, t Target) []captureInput {
 		{spec.SceneName + " video", "window_capture", map[string]any{"window": window, "priority": windowPriorityExe, "method": windowCaptureWGC, "cursor": false}},
 		{spec.SceneName + " audio", "wasapi_process_output_capture", map[string]any{"window": window, "priority": windowPriorityExe}},
 	}
+}
+
+// samePath reports whether two Windows paths name the same folder, whatever their slashes and case.
+func samePath(a, b string) bool {
+	clean := func(p string) string { return strings.ToLower(filepath.Clean(filepath.FromSlash(p))) }
+	return clean(a) == clean(b)
 }
 
 // fitToCanvas scales the captured window to sit whole inside the canvas, shape kept, centred.

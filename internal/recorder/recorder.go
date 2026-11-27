@@ -165,6 +165,41 @@ func (r *Recorder) Tick(ctx context.Context) error {
 	return r.startPiece(ctx)
 }
 
+// leftoverTitle names the class folder of a recording an earlier run left going.
+const leftoverTitle = "Recording left running"
+
+// StopLeftover stops a recording that an earlier run of the agent left going when it was killed
+// mid-class, and files it as a class of its own, so OBS does not record into staging for ever
+// (seen 2026-11-27). It leaves alone a recording into any other folder: someone using OBS by hand.
+// ok is false when there was nothing to stop.
+func (r *Recorder) StopLeftover(ctx context.Context) (class Class, ok bool, err error) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	if r.active || !r.cfg.OBSRunning() {
+		return Class{}, false, nil
+	}
+	if err := r.connect(ctx, false); err != nil {
+		return Class{}, false, err
+	}
+	status, err := r.client.RecordStatus(ctx)
+	if err != nil || !status.Active {
+		return Class{}, false, err
+	}
+	if dir, err := r.client.RecordDirectory(ctx); err != nil || !samePath(dir, r.staging()) {
+		return Class{}, false, err // recording somewhere else: not ours
+	}
+	path, err := r.stop(ctx)
+	if path == "" {
+		return Class{}, false, err
+	}
+	r.began = r.cfg.Now().Add(-time.Duration(status.DurationMS) * time.Millisecond)
+	r.target = Target{Title: leftoverTitle}
+	r.pieces, r.seen = []piece{{path, r.began}}, map[string]bool{path: true}
+	class, err = r.file(ctx)
+	r.pieces = nil
+	return class, true, err
+}
+
 // Follow points the capture at the class window's current title. Edge renames its window when
 // Meet moves from the lobby into the call and when she switches tabs, and OBS finds an Edge
 // window only by its exact title: without this, picture and sound go blank (seen 2026-11-27).

@@ -354,3 +354,32 @@ func TestClassFolders(t *testing.T) {
 		t.Fatalf("got %q and %q", first, second)
 	}
 }
+
+// Promise: a recording that a killed agent left going is stopped and filed when the agent starts
+// again, and a recording someone started into another folder is left alone.
+func TestLeftoverRecordingIsFiledAtTheNextStart(t *testing.T) {
+	ctx := context.Background()
+	h := newHarness(t, 1920, 1080)
+	h.begin(meet)
+	restarted := New(h.rec.cfg) // the agent was killed mid-class and started again
+	class, ok, err := restarted.StopLeftover(ctx)
+	if err != nil || !ok || len(class.Files) != 1 || !strings.Contains(filepath.Base(class.Dir), leftoverTitle) {
+		t.Fatalf("class %+v, ok %v, err %v", class, ok, err)
+	}
+	if h.fake.State().Recording {
+		t.Error("obs still recording")
+	}
+
+	h = newHarness(t, 1920, 1080)
+	h.begin(meet)
+	byHand := t.TempDir()
+	if err := h.rec.client.SetRecordDirectory(ctx, byHand); err != nil {
+		t.Fatal(err)
+	}
+	if _, ok, err := New(h.rec.cfg).StopLeftover(ctx); ok || err != nil {
+		t.Errorf("stopped a recording into %s: ok %v, err %v", byHand, ok, err)
+	}
+	if !h.fake.State().Recording {
+		t.Error("a recording into another folder was stopped")
+	}
+}
