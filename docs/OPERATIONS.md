@@ -7,6 +7,8 @@ recorded unless she clicks it; if she does, it records with OBS until the class 
 makes a Hindi/Hinglish transcript with Sarvam.
 
 The installed agent lives in `C:\classrec\` and is always a tagged release, never a dev build.
+How it decides a class is on, what it records and what the card's warnings mean is in the
+[README](../README.md#how-it-works).
 
 ## What is where
 
@@ -28,7 +30,8 @@ recordings or transcripts.
 .\classrec.exe selftest            # PASS/FAIL per check; writes logs\selftest-<time>.txt
 .\classrec.exe process "D:\Class Recordings\<class>"   # transcript for one class (calls Sarvam)
 .\classrec.exe calibrate "<class>\part-01.mkv"                     # set the silence threshold from a real class
-.\classrec.exe overlay-demo --state red                            # see the pill without a class
+.\classrec.exe record-test --app zoom                              # 30 s test recording: sound, picture, files
+.\classrec.exe overlay-demo --state red                            # see the card without a class
 ```
 
 ## Fix a bug from Claude Code on the web
@@ -61,6 +64,10 @@ Start-ScheduledTask classrec
 
 It will update again the next day, so also publish a fixed release (or delete the bad release on
 GitHub so "latest" is the good one).
+
+`Stop-ScheduledTask` kills the agent outright. If it was recording, OBS goes on recording into
+`_staging`; the agent stops that recording and files it as *Recording left running* when it starts
+again.
 
 ## Switch to mode full (transcripts)
 

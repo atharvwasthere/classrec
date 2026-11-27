@@ -9,3 +9,8 @@ dist/*.exe
 .obs-password
 logs/
 *.textClipping
+/classrec.exe
+dist/*.png
+dist/logs/
+dist/overlay-demo/
+dist/settings.json

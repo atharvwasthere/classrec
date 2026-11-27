@@ -3,7 +3,8 @@
 Records a student's online classes (Zoom, Google Meet in Edge) with OBS on a Windows 11 laptop,
 when she clicks "Record this class" on the card it shows for each class, and, in mode "full",
 turns them into timestamped Hindi/Hinglish transcripts with Sarvam.
-Operations (install, updates, rollback, mode full, what it changes in OBS): docs/OPERATIONS.md.
+What it does and how to use it: README.md. Operations (install, updates, rollback, mode full, what it
+changes in OBS): docs/OPERATIONS.md. What changed in each release: CHANGELOG.md.
 
 ## Building and testing
 
@@ -13,6 +14,9 @@ Operations (install, updates, rollback, mode full, what it changes in OBS): docs
 - `classrec record-test` checks a change against the real OBS. Before touching OBS or the agent,
   make sure no class is on (no Zoom or Meet meeting window).
 - Never commit `.env`, `.obs-password`, logs or recordings. Sarvam is called only in mode "full".
+- Commit messages and PRs carry no AI attribution (no `Co-Authored-By` trailer).
+- Every release is described in `CHANGELOG.md` before it is tagged; CI publishes that section as the
+  release notes and refuses a tag without one.
 
 ## Code standards
 
