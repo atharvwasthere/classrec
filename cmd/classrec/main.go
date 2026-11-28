@@ -13,6 +13,7 @@ import (
 	"syscall"
 
 	"classrec/internal/pipeline"
+	"classrec/internal/recorder"
 	"classrec/internal/sarvam"
 )
 
@@ -102,7 +103,7 @@ func runProcess(ctx context.Context, args []string) error {
 	if fs.NArg() > 0 {
 		return fmt.Errorf("unexpected argument %q", fs.Arg(0))
 	}
-	if isClassFolder(video) {
+	if recorder.IsClassFolder(video) {
 		logf := func(format string, a ...any) { fmt.Fprintf(os.Stderr, format+"\n", a...) }
 		return processClassUntil(ctx, video, *stopAfter, logf)
 	}

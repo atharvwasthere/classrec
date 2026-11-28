@@ -193,7 +193,7 @@ func (a *agent) record() {
 }
 
 func (a *agent) beginClass(ctx context.Context, target recorder.Target) {
-	a.log.startClass(classFile(a.opts.Root, "class.log"))
+	a.log.startClass(classFile(a.opts.Root, recorder.LogFile))
 	if err := a.rec.Begin(ctx, target); err != nil {
 		a.log.printf("could not start recording: %v", err)
 		return
@@ -229,8 +229,8 @@ func (a *agent) endClass(ctx context.Context) {
 	a.log.printf("class filed in %s: %d file(s), %d left in staging; mode %s", class.Dir, len(class.Files), class.Pending, a.opts.Mode.Mode)
 	a.log.endClass()
 	if class.Dir != "" {
-		moveIfPresent(classFile(a.opts.Root, "class.log"), filepath.Join(class.Dir, "class.log"), a.log.printf)
-		copyToReports(a.opts.Root, filepath.Join(class.Dir, "class.log"), "class "+filepath.Base(class.Dir)+".log")
+		moveIfPresent(classFile(a.opts.Root, recorder.LogFile), filepath.Join(class.Dir, recorder.LogFile), a.log.printf)
+		copyToReports(a.opts.Root, filepath.Join(class.Dir, recorder.LogFile), "class "+filepath.Base(class.Dir)+".log")
 		copyToReports(a.opts.Root, a.log.detectPath(), "")
 	}
 	afterClass(ctx, a.opts.Mode.Mode, class, a.log.printf, processClass)

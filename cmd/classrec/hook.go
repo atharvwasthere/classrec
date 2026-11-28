@@ -2,9 +2,7 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"errors"
-	"fmt"
 	"os"
 	"path/filepath"
 
@@ -37,12 +35,6 @@ func afterClass(ctx context.Context, mode Mode, class recorder.Class, logf func(
 	}()
 }
 
-// isClassFolder reports whether path is a class folder the agent filed.
-func isClassFolder(path string) bool {
-	_, err := os.Stat(filepath.Join(path, recorder.PiecesFile))
-	return err == nil
-}
-
 // processClass turns a class folder into a transcript: it joins the pieces in order and runs the
 // pipeline into dir\transcript.
 // It is resumable: a rerun reuses the joined video and every finished stage.
@@ -52,13 +44,9 @@ func processClass(ctx context.Context, dir string, logf func(string, ...any)) er
 
 // processClassUntil is processClass that ends after the named pipeline stage, "" for all.
 func processClassUntil(ctx context.Context, dir, stopAfter string, logf func(string, ...any)) error {
-	var info recorder.Pieces
-	content, err := os.ReadFile(filepath.Join(dir, recorder.PiecesFile))
+	info, err := recorder.ReadPieces(dir)
 	if err != nil {
 		return err
-	}
-	if err := json.Unmarshal(content, &info); err != nil {
-		return fmt.Errorf("%s: %w", recorder.PiecesFile, err)
 	}
 	if len(info.Pieces) == 0 {
 		return errors.New("the class has no pieces")
@@ -82,7 +70,8 @@ func processClassUntil(ctx context.Context, dir, stopAfter string, logf func(str
 	return p.Run(ctx)
 }
 
-// joinPieces returns the class as one video, joining the pieces once into joined.mkv.
+// joinPieces returns the class as one video, joining the pieces once into "<folder> - all
+// parts.mkv" (joined.mkv in folders from before v0.1.12).
 func joinPieces(ctx context.Context, dir string, info recorder.Pieces) (string, error) {
 	parts := make([]string, len(info.Pieces))
 	for i, p := range info.Pieces {
@@ -91,9 +80,17 @@ func joinPieces(ctx context.Context, dir string, info recorder.Pieces) (string, 
 	if len(parts) == 1 {
 		return parts[0], nil
 	}
-	joined := filepath.Join(dir, "joined.mkv")
-	if _, err := os.Stat(joined); err == nil {
+	if old := filepath.Join(dir, "joined.mkv"); exists(old) {
+		return old, nil
+	}
+	joined := filepath.Join(dir, filepath.Base(dir)+" - all parts.mkv")
+	if exists(joined) {
 		return joined, nil
 	}
 	return joined, media.Concat(ctx, parts, joined)
+}
+
+func exists(path string) bool {
+	_, err := os.Stat(path)
+	return err == nil
 }

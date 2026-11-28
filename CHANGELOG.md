@@ -5,6 +5,16 @@ this file, so every version is listed here before it is tagged.
 
 ## [Unreleased]
 
+## [v0.1.12] - 2026-11-28
+
+### Changed
+- **Class files have readable names.** The video is named after the class, like its folder
+  (`2026-11-28 Friday - Maths (Zoom).mkv`), so a copy taken out of the folder still says which class
+  it is. Only after OBS was restarted mid-class is it split into `… - part 1.mkv`, `… - part 2.mkv`.
+  The class log is `Recording log.txt` and the list of parts is `Recording parts.json` (were
+  `part-01.mkv`, `class.log` and `pieces.json`). Classes recorded earlier keep their names and can
+  still be transcribed.
+
 ## [v0.1.11] - 2026-11-28
 
 ### Added
@@ -144,7 +154,8 @@ First release.
   `overlay-demo`; reports for remote debugging, with every window other than Zoom and Edge stripped
   from the detect logs.
 
-[Unreleased]: https://github.com/atharvwasthere/classrec/compare/v0.1.11...HEAD
+[Unreleased]: https://github.com/atharvwasthere/classrec/compare/v0.1.12...HEAD
+[v0.1.12]: https://github.com/atharvwasthere/classrec/compare/v0.1.11...v0.1.12
 [v0.1.11]: https://github.com/atharvwasthere/classrec/compare/v0.1.10...v0.1.11
 [v0.1.10]: https://github.com/atharvwasthere/classrec/compare/v0.1.9...v0.1.10
 [v0.1.9]: https://github.com/atharvwasthere/classrec/compare/v0.1.8...v0.1.9

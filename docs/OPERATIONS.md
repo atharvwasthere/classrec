@@ -16,7 +16,7 @@ How it decides a class is on, what it records and what the card's warnings mean 
 |---|---|
 | Agent, ffmpeg, ffprobe, `.env` (Sarvam key), `.obs-password`, `settings.json` | `C:\classrec\` |
 | Agent logs (two weeks), detect logs, selftest reports | `C:\classrec\logs\` |
-| Classes: `part-01.mkv`…, `pieces.json`, `class.log`, `transcript\` | `<recordings folder>\<class>\` |
+| Classes: `<class>.mkv` (`<class> - part 1.mkv`, `- part 2.mkv`… after an OBS restart), `Recording log.txt`, `Recording parts.json`, `transcript\` | `<recordings folder>\<class>\` |
 | Recordings in progress, and pieces OBS still held at the end of a class | `…\Class Recordings\_staging\` (`pending.json` lists the held ones; they are filed at the next start) |
 | Reports for remote debugging | `<recordings folder>\_reports\` |
 
@@ -29,7 +29,7 @@ recordings or transcripts.
 ```powershell
 .\classrec.exe selftest            # PASS/FAIL per check; writes logs\selftest-<time>.txt
 .\classrec.exe process "<recordings folder>\<class>"   # transcript for one class (calls Sarvam)
-.\classrec.exe calibrate "<class>\part-01.mkv"                     # set the silence threshold from a real class
+.\classrec.exe calibrate "<class>\<class>.mkv"                     # set the silence threshold from a real class
 .\classrec.exe record-test --app zoom                              # 30 s test recording: sound, picture, files
 .\classrec.exe overlay-demo --state red                            # see the card without a class
 ```

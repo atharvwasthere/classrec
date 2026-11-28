@@ -218,8 +218,8 @@ func TestOBSKilledMidClassGivesTwoPiecesInOneFolder(t *testing.T) {
 	}
 
 	class := h.end()
-	if len(class.Files) != 2 || read(t, filepath.Join(class.Dir, "part-01.mkv")) != "fake mkv recording-1.mkv" ||
-		read(t, filepath.Join(class.Dir, "part-02.mkv")) != "fake mkv recording-2.mkv" {
+	if len(class.Files) != 2 || read(t, filepath.Join(class.Dir, "2026-11-25 Wednesday - xyz-abcd-efg (Meet) - part 1.mkv")) != "fake mkv recording-1.mkv" ||
+		read(t, filepath.Join(class.Dir, "2026-11-25 Wednesday - xyz-abcd-efg (Meet) - part 2.mkv")) != "fake mkv recording-2.mkv" {
 		t.Fatalf("class %+v", class)
 	}
 	var info Pieces
@@ -227,7 +227,7 @@ func TestOBSKilledMidClassGivesTwoPiecesInOneFolder(t *testing.T) {
 		t.Fatal(err)
 	}
 	if len(info.Pieces) != 2 || !info.Pieces[0].Start.Equal(classStart) || !info.Pieces[1].Start.Equal(h.now) {
-		t.Fatalf("pieces.json %+v", info)
+		t.Fatalf("parts file %+v", info)
 	}
 	if left := h.staging(); len(left) != 0 {
 		t.Fatalf("staging still holds %v", left)
@@ -316,7 +316,7 @@ func TestHeldFileIsFiledAtTheNextStart(t *testing.T) {
 	if moved, still := h.rec.RetryPending(context.Background()); moved != 1 || still != 0 {
 		t.Fatalf("moved %d, still %d", moved, still)
 	}
-	if read(t, filepath.Join(class.Dir, "part-01.mkv")) != "fake mkv recording-1.mkv" || len(h.staging()) != 0 {
+	if read(t, filepath.Join(class.Dir, "2026-11-25 Wednesday - xyz-abcd-efg (Meet).mkv")) != "fake mkv recording-1.mkv" || len(h.staging()) != 0 {
 		t.Fatal("not filed")
 	}
 }
@@ -383,5 +383,18 @@ func TestLeftoverRecordingIsFiledAtTheNextStart(t *testing.T) {
 	}
 	if !h.fake.State().Recording {
 		t.Error("a recording into another folder was stopped")
+	}
+}
+
+// Promise: folders filed before v0.1.12, with pieces.json, can still be found and transcribed.
+func TestOlderClassFoldersAreStillRead(t *testing.T) {
+	dir := t.TempDir()
+	if IsClassFolder(dir) {
+		t.Fatal("an empty folder is not a class folder")
+	}
+	os.WriteFile(filepath.Join(dir, "pieces.json"), []byte(`{"app":"Zoom","pieces":[{"file":"part-01.mkv"}]}`), 0o644)
+	info, err := ReadPieces(dir)
+	if !IsClassFolder(dir) || err != nil || len(info.Pieces) != 1 || info.Pieces[0].File != "part-01.mkv" {
+		t.Fatalf("old folder: class folder %v, %+v, %v", IsClassFolder(dir), info, err)
 	}
 }

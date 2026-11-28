@@ -2,7 +2,6 @@ package main
 
 import (
 	"context"
-	"encoding/json"
 	"flag"
 	"fmt"
 	"os"
@@ -133,7 +132,7 @@ func checkClass(ctx context.Context, class recorder.Class, problems []string, wa
 	}
 	if wantTwoPieces {
 		starts := pieceStarts(class.Dir)
-		verdict(len(class.Files) == 2 && len(starts) == 2, "two pieces in one folder: %d file(s), pieces.json starts %v", len(class.Files), starts)
+		verdict(len(class.Files) == 2 && len(starts) == 2, "two pieces in one folder: %d file(s), parts file starts %v", len(class.Files), starts)
 	}
 	verdict(len(problems) == 0, "recorder problems: %v", problems)
 	return strings.TrimRight(out.String(), "\n")
@@ -150,9 +149,8 @@ func describe(out *strings.Builder, file string, info media.Info) {
 }
 
 func pieceStarts(dir string) []string {
-	var info recorder.Pieces
-	content, err := os.ReadFile(filepath.Join(dir, recorder.PiecesFile))
-	if err != nil || json.Unmarshal(content, &info) != nil {
+	info, err := recorder.ReadPieces(dir)
+	if err != nil {
 		return nil
 	}
 	var starts []string

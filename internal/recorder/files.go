@@ -16,9 +16,48 @@ import (
 	"classrec/internal/fsx"
 )
 
-// PiecesFile in a class folder says when each piece began, so a mark made at a wall-clock time
-// can be found in the joined recording.
-const PiecesFile = "pieces.json"
+// The files of a class folder besides its video. PiecesFile says when each piece began, so the
+// pieces can be joined in order; oldPiecesFile is its name in folders filed before v0.1.12.
+const (
+	PiecesFile    = "Recording parts.json"
+	LogFile       = "Recording log.txt"
+	oldPiecesFile = "pieces.json"
+)
+
+// ReadPieces reads a class folder's PiecesFile, or the pieces.json of an older folder.
+func ReadPieces(dir string) (Pieces, error) {
+	var info Pieces
+	content, err := os.ReadFile(filepath.Join(dir, PiecesFile))
+	if errors.Is(err, os.ErrNotExist) {
+		content, err = os.ReadFile(filepath.Join(dir, oldPiecesFile))
+	}
+	if err != nil {
+		return info, err
+	}
+	if err := json.Unmarshal(content, &info); err != nil {
+		return info, fmt.Errorf("%s: %w", PiecesFile, err)
+	}
+	return info, nil
+}
+
+// IsClassFolder reports whether dir is a class folder the agent filed.
+func IsClassFolder(dir string) bool {
+	for _, name := range []string{PiecesFile, oldPiecesFile} {
+		if _, err := os.Stat(filepath.Join(dir, name)); err == nil {
+			return true
+		}
+	}
+	return false
+}
+
+// pieceName names a class's video after its folder, so a copy taken out of the folder still says
+// which class it is: "<folder>.mkv", or "<folder> - part 2.mkv" when OBS was restarted mid-class.
+func pieceName(dir string, i, count int, ext string) string {
+	if count == 1 {
+		return filepath.Base(dir) + ext
+	}
+	return fmt.Sprintf("%s - part %d%s", filepath.Base(dir), i+1, ext)
+}
 
 // Pieces is the content of PiecesFile.
 type Pieces struct {
@@ -44,7 +83,7 @@ func (r *Recorder) file(ctx context.Context) (Class, error) {
 	class := Class{Dir: dir}
 	info := Pieces{App: r.target.App, Title: r.name, Began: r.began}
 	for i, p := range r.pieces {
-		name := fmt.Sprintf("part-%02d%s", i+1, filepath.Ext(p.path))
+		name := pieceName(dir, i, len(r.pieces), filepath.Ext(p.path))
 		info.Pieces = append(info.Pieces, PieceInfo{File: name, Start: p.start})
 		dst := filepath.Join(dir, name)
 		moved, err := r.move(ctx, p.path, dst)
